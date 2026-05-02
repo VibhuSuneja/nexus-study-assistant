@@ -12,6 +12,11 @@ import Face3D from "./Face3D";
 
 export default function Dashboard() {
   const { tasks, updateTask, toolHandlers, focusTask, focusDuration, setFocusTask } = useTasks();
+  const { sessionId, remoteFrame, createSession, joinSession, broadcastFrame, isBroadcasting, setIsBroadcasting, history, addMessageToHistory, disconnectSession, nearbyNodes } = useSessionSync();
+  const { entries: wikiEntries, upsertWikiEntry, isSyncing: isWikiSyncing } = useNeuralWiki();
+  const { questions: recallQueue, activeQuestion, setActiveQuestion, generateRecallQuestion, submitAnswer } = useActiveRecall();
+  const { isLoaded: isLocalGemmaLoaded, generateResponse: generateLocalResponse, isProcessing: isLocalProcessing, mode, activeModel, customIp, updateIp } = useLocalGemma();
+
   const [isLocalMode, setIsLocalMode] = useState(false);
   
   const processToolCall = useCallback(async (name: string, args: any) => {
@@ -28,11 +33,7 @@ export default function Dashboard() {
     return { error: "Unknown tool" };
   }, [toolHandlers, upsertWikiEntry, generateRecallQuestion]);
 
-  const { sessionId, remoteFrame, createSession, joinSession, broadcastFrame, isBroadcasting, setIsBroadcasting, history, addMessageToHistory, disconnectSession, nearbyNodes } = useSessionSync();
   const { startSession, stopSession, isConnected, isConnecting, volume, isScreenSharing, startScreenSharing, stopScreenSharing, getLastFrame, sendTextMessage } = useLiveAssistant(processToolCall, remoteFrame);
-  const { isLoaded: isLocalGemmaLoaded, generateResponse: generateLocalResponse, isProcessing: isLocalProcessing, mode, activeModel, customIp, updateIp } = useLocalGemma();
-  const { entries: wikiEntries, upsertWikiEntry, isSyncing: isWikiSyncing } = useNeuralWiki();
-  const { questions: recallQueue, activeQuestion, setActiveQuestion, generateRecallQuestion, submitAnswer } = useActiveRecall();
   
   const [isEditingIp, setIsEditingIp] = useState(false);
   const [sessionInput, setSessionInput] = useState("");
@@ -185,7 +186,7 @@ export default function Dashboard() {
             onClick={() => setActiveTab('tasks')}
             className={`flex-1 py-3 text-[10px] font-mono tracking-widest uppercase transition-all ${activeTab === 'tasks' ? 'text-white border-b border-white bg-white/5' : 'text-zinc-500'}`}
           >
-            WORK_LOAD
+            TASKS
           </button>
           <button 
             onClick={() => setActiveTab('vision')}
@@ -231,6 +232,20 @@ export default function Dashboard() {
                   <span className="text-[9px] font-mono text-[#F27D26] uppercase">{task.course}</span>
                 </div>
                 <h4 className={`text-xs font-medium leading-tight ${focusTask === task.id ? 'text-white' : 'text-zinc-400'}`}>{task.title}</h4>
+                {focusTask === task.id && (
+                  <motion.button
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsLockedIn(true);
+                    }}
+                    className="mt-3 w-full py-2 bg-[#F27D26] text-black text-[10px] font-bold rounded uppercase tracking-widest hover:scale-[1.02] active:scale-[0.98] transition-all flex items-center justify-center gap-2"
+                  >
+                    <Lock size={12} />
+                    Lock In
+                  </motion.button>
+                )}
               </div>
             ))}
           </div>
@@ -430,7 +445,7 @@ export default function Dashboard() {
         </div>
 
         {/* Right Column: Terminal & History (Hidden on mobile if not active) */}
-        <div className={`w-full lg:w-[400px] flex flex-col border-l border-white/5 bg-[#0A0A0C]/50 ${activeTab === 'history' ? 'flex' : 'hidden lg:flex'}`}>
+        <div className={`w-full lg:w-[400px] flex flex-col border-l border-white/5 bg-[#0A0A0C]/50 ${(activeTab === 'history' || activeTab === 'wiki') ? 'flex' : 'hidden lg:flex'}`}>
           <div className="p-4 border-b border-white/5 flex justify-between items-center bg-black/20">
             <h2 className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest flex items-center gap-2">
               <TerminalIcon size={12} />
