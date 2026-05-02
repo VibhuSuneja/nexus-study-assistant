@@ -7,6 +7,15 @@ export function useSessionSync() {
   const [remoteFrame, setRemoteFrame] = useState<string | null>(null);
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
+  const [nearbyNodes, setNearbyNodes] = useState<any[]>([]);
+  const [deviceId] = useState(() => {
+    let id = localStorage.getItem('nexus_device_id');
+    if (!id) {
+      id = Math.random().toString(36).substring(2, 10).toUpperCase();
+      localStorage.setItem('nexus_device_id', id);
+    }
+    return id;
+  });
 
   useEffect(() => {
     if (!sessionId) return;
@@ -22,6 +31,90 @@ export function useSessionSync() {
 
     return () => unsub();
   }, [sessionId]);
+
+  // Handle Node Discovery (Bluetooth-like behavior)
+  useEffect(() => {
+    let publicIp = "unknown";
+    const getIpAndRegister = async () => {
+      try {
+        const res = await fetch('https://api.ipify.org?format=json');
+        const data = await res.json();
+        publicIp = data.ip;
+      } catch (e) {
+        console.warn("Could not fetch IP for discovery, using fallback.");
+      }
+
+      const ua = navigator.userAgent;
+      const deviceName = /android/i.test(ua) ? "Android Node" : 
+                         /iPad|iPhone|iPod/.test(ua) ? "Mobile Node" : 
+                         /windows/i.test(ua) ? "Windows Hub" : 
+                         /macintosh/i.test(ua) ? "Mac Hub" : "Nexus Node";
+
+      const nodeRef = doc(db, "nodes", deviceId);
+      
+      const updatePresence = () => {
+        setDoc(nodeRef, {
+          name: deviceName,
+          ip: publicIp,
+          lastActive: new Date(),
+          currentSession: sessionId
+        }, { merge: true });
+      };
+
+      updatePresence();
+      const interval = setInterval(updatePresence, 30000); // Pulse every 30s
+
+      // Listen for other nodes on the same IP
+      const q = doc(db, "nodes", "metadata"); // This is a dummy to trigger listener or use collection query
+      // Actually we need a collection query to find nodes with same IP
+      // But for simplicity in this prototype, we'll listen to a shared discovery doc or 
+      // just list all nodes and filter locally if rules allow.
+      
+      // Better: Use a collection listener (requires indexing if filtered, but we'll filter locally)
+      // Note: In production you'd use a cloud function or proper indexing.
+      const nodesUnsub = onSnapshot(doc(db, "discovery", publicIp.replace(/\./g, '_')), (doc) => {
+        if (doc.exists()) {
+          const data = doc.data();
+          const nodes = Object.entries(data)
+            .filter(([id]) => id !== deviceId)
+            .map(([id, node]: [string, any]) => ({ id, ...node }))
+            .filter(node => (new Date().getTime() - new Date(node.lastActive).getTime()) < 120000); // Active in last 2 mins
+          setNearbyNodes(nodes);
+        }
+      });
+
+      // Update the discovery document with our info
+      const discRef = doc(db, "discovery", publicIp.replace(/\./g, '_'));
+      const updateDisc = () => {
+        updateDoc(discRef, {
+          [deviceId]: {
+            name: deviceName,
+            lastActive: new Date().toISOString(),
+            currentSession: sessionId
+          }
+        }).catch(() => {
+          // If doc doesn't exist, create it
+          setDoc(discRef, {
+            [deviceId]: {
+              name: deviceName,
+              lastActive: new Date().toISOString(),
+              currentSession: sessionId
+            }
+          });
+        });
+      };
+      updateDisc();
+      const discInterval = setInterval(updateDisc, 20000);
+
+      return () => {
+        clearInterval(interval);
+        clearInterval(discInterval);
+        nodesUnsub();
+      };
+    };
+
+    getIpAndRegister();
+  }, [deviceId, sessionId]);
 
   const createSession = useCallback(async () => {
     try {
@@ -94,6 +187,7 @@ export function useSessionSync() {
     setIsBroadcasting,
     history,
     addMessageToHistory,
-    disconnectSession
+    disconnectSession,
+    nearbyNodes
   };
 }

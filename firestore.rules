@@ -5,6 +5,13 @@ service cloud.firestore {
     match /sessions/{sessionId} {
       allow read, write: if true;
     }
+    // Allow discovery presence
+    match /nodes/{deviceId} {
+      allow read, write: if true;
+    }
+    match /discovery/{ip} {
+      allow read, write: if true;
+    }
     // Protect other user data (Tasks, etc.)
     match /{document=**} {
       allow read, write: if request.auth != null;

@@ -127,7 +127,15 @@ export class ScreenStreamer {
   private lastFrame: string | null = null;
 
   async start(onData: (base64: string) => void) {
-    this.displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    this.displayStream = await navigator.mediaDevices.getDisplayMedia({ 
+      video: {
+        displaySurface: "monitor",
+      },
+      // @ts-ignore
+      selfBrowserSurface: "exclude",
+      preferCurrentTab: false,
+      systemAudio: "include"
+    } as any);
     this.video = document.createElement("video");
     this.video.srcObject = this.displayStream;
     await this.video.play();

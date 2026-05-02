@@ -21,7 +21,7 @@ export default function Dashboard() {
     return { error: "Unknown tool" };
   }, [toolHandlers]);
 
-  const { sessionId, remoteFrame, createSession, joinSession, broadcastFrame, isBroadcasting, setIsBroadcasting, history, addMessageToHistory, disconnectSession } = useSessionSync();
+  const { sessionId, remoteFrame, createSession, joinSession, broadcastFrame, isBroadcasting, setIsBroadcasting, history, addMessageToHistory, disconnectSession, nearbyNodes } = useSessionSync();
   const { startSession, stopSession, isConnected, isConnecting, volume, isScreenSharing, startScreenSharing, stopScreenSharing, getLastFrame, sendTextMessage } = useLiveAssistant(processToolCall, remoteFrame);
   const { isLoaded: isLocalGemmaLoaded, generateResponse: generateLocalResponse, isProcessing: isLocalProcessing, mode, activeModel, customIp, updateIp } = useLocalGemma();
   
@@ -46,6 +46,7 @@ export default function Dashboard() {
   
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [isMCPOpen, setIsMCPOpen] = useState(false);
+  const [isFullscreenVision, setIsFullscreenVision] = useState(false);
   const [activeTab, setActiveTab] = useState<'tasks' | 'vision' | 'history'>('vision');
 
   const toggleSubtask = (taskId: string, subtaskId: string) => {
@@ -235,29 +236,64 @@ export default function Dashboard() {
 
             {/* PC Sync Section */}
             {!sessionId && (
-              <div className="mt-4 pt-4 border-t border-white/5 flex gap-2">
-                <input 
-                  type="text"
-                  value={sessionInput}
-                  onChange={(e) => setSessionInput(e.target.value)}
-                  placeholder="CODE"
-                  className="w-full bg-black/60 border border-white/10 rounded px-2 py-1 text-[10px] font-mono text-white"
-                />
+              <div className="mt-4 pt-4 border-t border-white/5">
+                <div className="flex gap-2 mb-4">
+                  <input 
+                    type="text"
+                    value={sessionInput}
+                    onChange={(e) => setSessionInput(e.target.value)}
+                    placeholder="CODE"
+                    className="w-full bg-black/60 border border-white/10 rounded px-2 py-1 text-[10px] font-mono text-white"
+                  />
+                  <button 
+                    onClick={() => joinSession(sessionInput)}
+                    className="px-2 py-1 bg-[#00FFDD]/10 border border-[#00FFDD]/30 text-[#00FFDD] text-[10px] font-mono rounded hover:bg-[#00FFDD]/20 transition-all"
+                  >
+                    JOIN
+                  </button>
+                </div>
+
+                {/* Nearby Discovery (Bluetooth style) */}
+                {nearbyNodes.length > 0 && (
+                  <div className="space-y-2 mb-4">
+                    <span className="text-[8px] font-mono text-zinc-500 uppercase tracking-widest flex items-center gap-1">
+                      <div className="w-1 h-1 rounded-full bg-[#00FFDD] animate-ping" />
+                      Detected_Nearby
+                    </span>
+                    {nearbyNodes.map(node => (
+                      <button 
+                        key={node.id}
+                        onClick={() => {
+                          if (node.currentSession) {
+                            joinSession(node.currentSession);
+                          } else {
+                            createSession().then(id => {
+                              // We could potentially notify the other device here, 
+                              // but for now we just join the local session.
+                            });
+                          }
+                        }}
+                        className="w-full flex items-center justify-between p-2.5 bg-white/5 border border-white/10 rounded-lg hover:border-[#00FFDD]/50 hover:bg-[#00FFDD]/5 transition-all group"
+                      >
+                        <div className="flex flex-col items-start">
+                          <span className="text-[10px] font-mono text-white font-bold">{node.name}</span>
+                          <span className="text-[8px] font-mono text-zinc-600 uppercase tracking-tighter">
+                            {node.currentSession ? 'ACTIVE_SESSION' : 'READY_TO_PAIR'}
+                          </span>
+                        </div>
+                        <Activity size={12} className="text-[#00FFDD] opacity-20 group-hover:opacity-100 transition-opacity" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+
                 <button 
-                  onClick={() => joinSession(sessionInput)}
-                  className="px-2 py-1 bg-[#00FFDD]/10 border border-[#00FFDD]/30 text-[#00FFDD] text-[10px] font-mono rounded"
+                  onClick={() => createSession()}
+                  className="w-full py-1.5 bg-white/5 border border-white/10 text-white text-[10px] font-mono rounded hover:bg-white/10 transition-all uppercase"
                 >
-                  JOIN
+                  GEN_NEW_ACCESS_CODE
                 </button>
               </div>
-            )}
-            {!sessionId && (
-              <button 
-                onClick={() => createSession()}
-                className="w-full mt-2 py-1.5 bg-white/5 border border-white/10 text-white text-[10px] font-mono rounded hover:bg-white/10 transition-all uppercase"
-              >
-                GEN_SYNC_CODE
-              </button>
             )}
           </div>
         </div>
@@ -317,27 +353,49 @@ export default function Dashboard() {
                   <span className="text-[#00FFDD]">{syncStats.received}</span>
                 </div>
                 {!isScreenSharing && !remoteFrame ? (
-                  <button onClick={() => startScreenSharing()} className="text-[9px] font-mono text-[#F27D26] border border-[#F27D26]/30 px-2 py-0.5 rounded">
-                    START_SCR
+                  <button 
+                    onClick={() => startScreenSharing()} 
+                    className="text-[9px] font-mono text-[#F27D26] border border-[#F27D26]/30 px-3 py-1 rounded-full hover:bg-[#F27D26]/10 transition-all flex items-center gap-1.5 group"
+                    title="Share Entire Screen (Hint: Select 'Entire Screen' in the browser dialog)"
+                  >
+                    <Monitor size={10} className="group-hover:scale-110 transition-transform" />
+                    SHARE_ENTIRE_SCREEN
                   </button>
                 ) : isScreenSharing && (
-                   <button 
-                    onClick={() => setIsBroadcasting(!isBroadcasting)}
-                    className={`text-[9px] font-mono px-2 py-0.5 rounded border transition-all ${isBroadcasting ? 'bg-[#00FFDD]/10 border-[#00FFDD] text-[#00FFDD]' : 'bg-white/5 border-white/10 text-zinc-500'}`}
-                   >
-                    {isBroadcasting ? 'SYNCING' : 'BROADCAST'}
-                   </button>
+                  <div className="flex items-center gap-2">
+                    <button 
+                      onClick={() => stopScreenSharing()}
+                      className="text-[9px] font-mono text-red-500 border border-red-500/30 px-2 py-0.5 rounded hover:bg-red-500/10 transition-all"
+                    >
+                      STOP_SHARE
+                    </button>
+                    <button 
+                      onClick={() => setIsBroadcasting(!isBroadcasting)}
+                      className={`text-[9px] font-mono px-3 py-1 rounded-full border transition-all flex items-center gap-1.5 ${isBroadcasting ? 'bg-[#00FFDD]/10 border-[#00FFDD] text-[#00FFDD] shadow-[0_0_10px_rgba(0,255,221,0.2)]' : 'bg-white/5 border-white/10 text-zinc-500'}`}
+                    >
+                      <Activity size={10} className={isBroadcasting ? "animate-pulse" : ""} />
+                      {isBroadcasting ? 'SYNC_LIVE' : 'BROADCAST'}
+                    </button>
+                  </div>
                 )}
               </div>
             </div>
             
             <div className="relative h-full max-h-[180px] lg:max-h-[220px] rounded-xl overflow-hidden border border-white/5 bg-black/60 group">
               {(isScreenSharing || remoteFrame) ? (
-                <img 
-                  src={`data:image/jpeg;base64,${isScreenSharing ? getLastFrame() : remoteFrame}`} 
-                  className="w-full h-full object-contain"
-                  alt="Vision Feed"
-                />
+                <>
+                  <img 
+                    src={`data:image/jpeg;base64,${isScreenSharing ? getLastFrame() : remoteFrame}`} 
+                    className="w-full h-full object-contain"
+                    alt="Vision Feed"
+                  />
+                  <button 
+                    onClick={() => setIsFullscreenVision(true)}
+                    className="absolute top-2 right-2 p-1.5 bg-black/60 border border-white/10 rounded-lg text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/80"
+                  >
+                    <Activity size={14} className="rotate-45" />
+                  </button>
+                </>
               ) : (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-zinc-700">
                   <Monitor size={24} strokeWidth={1} />
@@ -724,6 +782,39 @@ export default function Dashboard() {
                  </div>
               </div>
             </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {/* Fullscreen Vision Overlay */}
+      <AnimatePresence>
+        {isFullscreenVision && (isScreenSharing || remoteFrame) && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black flex flex-col items-center justify-center"
+          >
+            <button 
+              onClick={() => setIsFullscreenVision(false)}
+              className="absolute top-6 right-6 z-[110] p-3 bg-white/10 border border-white/10 rounded-full text-white backdrop-blur-md hover:bg-white/20 transition-all"
+            >
+              <X size={24} />
+            </button>
+            
+            <div className="absolute top-6 left-6 text-white/40 font-mono text-[10px] flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+              LIVE_FULL_STREAM
+            </div>
+
+            <img 
+              src={`data:image/jpeg;base64,${isScreenSharing ? getLastFrame() : remoteFrame}`} 
+              className="w-full h-full object-contain"
+              alt="Vision Full Feed"
+            />
+
+            <div className="absolute bottom-8 px-6 py-3 bg-black/40 backdrop-blur-md border border-white/10 rounded-full text-[10px] font-mono text-zinc-400">
+              HINT: ROTATE DEVICE FOR BETTER VIEW
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
