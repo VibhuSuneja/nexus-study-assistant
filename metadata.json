@@ -1,0 +1,10 @@
+{
+  "name": "Nexus Study Assistant",
+  "description": "An AI-powered study companion that uses screen vision and real-time voice to guide computer science students through tasks seamlessly integrating with their schedule via mocked MCP tools.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "display-capture"
+  ],
+  "majorCapabilities": []
+}

@@ -1,0 +1,13 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow anyone to join or create a study session via its code
+    match /sessions/{sessionId} {
+      allow read, write: if true;
+    }
+    // Protect other user data (Tasks, etc.)
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}

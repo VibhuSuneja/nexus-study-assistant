@@ -1,0 +1,95 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&family=Georgia:ital@1&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-mono: 'JetBrains Mono', Courier, monospace;
+  --font-sans: 'Inter', sans-serif;
+}
+
+:root {
+  --bg: #0C0C0E;
+  --panel-bg: #151619;
+  --ink: #FFFFFF;
+  --ink-muted: #8E9299;
+  --line: #2A2B30;
+  --accent: #F27D26;
+  --accent-glow: rgba(242, 125, 38, 0.4);
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+}
+
+.data-row {
+  display: grid;
+  grid-template-columns: 40px 1.5fr 1fr 100px;
+  padding: 1rem;
+  border-bottom: 1px solid var(--line);
+  transition: background 0.2s ease, color 0.2s ease;
+  cursor: pointer;
+}
+.data-row:hover {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.col-header {
+  font-family: 'Georgia', serif;
+  font-style: italic;
+  font-size: 11px;
+  color: var(--ink-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0 1rem 0.5rem 1rem;
+  border-bottom: 1px dashed var(--line);
+  display: grid;
+  grid-template-columns: 40px 1.5fr 1fr 100px;
+}
+
+.widget-container {
+  background-color: var(--panel-bg);
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+}
+
+.radial-track {
+  border: 1px dashed var(--ink-muted);
+  border-radius: 50%;
+}
+
+.status-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.animate-glow {
+  animation: pulse-glow 2s infinite ease-in-out;
+}
