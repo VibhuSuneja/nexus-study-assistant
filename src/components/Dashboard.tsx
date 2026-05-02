@@ -4,6 +4,8 @@ import { useLiveAssistant } from "../hooks/useLiveAssistant";
 import { useTasks } from "../hooks/useTasks";
 import { useLocalGemma } from "../hooks/useLocalGemma";
 import { useSessionSync } from "../hooks/useSessionSync";
+import { useNeuralWiki } from "../hooks/useNeuralWiki";
+import { useActiveRecall } from "../hooks/useActiveRecall";
 import { motion, AnimatePresence } from "motion/react";
 
 import Face3D from "./Face3D";
@@ -14,16 +16,23 @@ export default function Dashboard() {
   
   const processToolCall = useCallback(async (name: string, args: any) => {
     console.log("Tool called by Assistant:", name, args);
-    const handler = (toolHandlers as any)[name];
+    const allHandlers = {
+      ...toolHandlers,
+      upsertWikiEntry,
+      generateRecallQuestion
+    };
+    const handler = (allHandlers as any)[name];
     if (handler) {
       return handler(args);
     }
     return { error: "Unknown tool" };
-  }, [toolHandlers]);
+  }, [toolHandlers, upsertWikiEntry, generateRecallQuestion]);
 
   const { sessionId, remoteFrame, createSession, joinSession, broadcastFrame, isBroadcasting, setIsBroadcasting, history, addMessageToHistory, disconnectSession, nearbyNodes } = useSessionSync();
   const { startSession, stopSession, isConnected, isConnecting, volume, isScreenSharing, startScreenSharing, stopScreenSharing, getLastFrame, sendTextMessage } = useLiveAssistant(processToolCall, remoteFrame);
   const { isLoaded: isLocalGemmaLoaded, generateResponse: generateLocalResponse, isProcessing: isLocalProcessing, mode, activeModel, customIp, updateIp } = useLocalGemma();
+  const { entries: wikiEntries, upsertWikiEntry, isSyncing: isWikiSyncing } = useNeuralWiki();
+  const { questions: recallQueue, activeQuestion, setActiveQuestion, generateRecallQuestion, submitAnswer } = useActiveRecall();
   
   const [isEditingIp, setIsEditingIp] = useState(false);
   const [sessionInput, setSessionInput] = useState("");
@@ -47,7 +56,15 @@ export default function Dashboard() {
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [isMCPOpen, setIsMCPOpen] = useState(false);
   const [isFullscreenVision, setIsFullscreenVision] = useState(false);
-  const [activeTab, setActiveTab] = useState<'tasks' | 'vision' | 'history'>('vision');
+  const [activeTab, setActiveTab] = useState<'tasks' | 'vision' | 'history' | 'wiki'>('vision');
+  const [selectedWikiEntry, setSelectedWikiEntry] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Automatically trigger active recall if a question is due during a focus session
+    if (focusTask && recallQueue.length > 0 && !activeQuestion) {
+      setActiveQuestion(recallQueue[0]);
+    }
+  }, [focusTask, recallQueue, activeQuestion, setActiveQuestion]);
 
   const toggleSubtask = (taskId: string, subtaskId: string) => {
     const task = tasks.find(t => t.id === taskId);
@@ -175,6 +192,12 @@ export default function Dashboard() {
             className={`flex-1 py-3 text-[10px] font-mono tracking-widest uppercase transition-all ${activeTab === 'vision' ? 'text-[#F27D26] border-b border-[#F27D26] bg-[#F27D26]/5' : 'text-zinc-500'}`}
           >
             MISSION_HUB
+          </button>
+          <button 
+            onClick={() => setActiveTab('wiki')}
+            className={`flex-1 py-3 text-[10px] font-mono tracking-widest uppercase transition-all ${activeTab === 'wiki' ? 'text-purple-400 border-b border-purple-400 bg-purple-400/5' : 'text-zinc-500'}`}
+          >
+            NEURAL_WIKI
           </button>
           <button 
             onClick={() => setActiveTab('history')}
@@ -411,52 +434,119 @@ export default function Dashboard() {
           <div className="p-4 border-b border-white/5 flex justify-between items-center bg-black/20">
             <h2 className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest flex items-center gap-2">
               <TerminalIcon size={12} />
-              Neural_History
+              {activeTab === 'wiki' ? 'Knowledge_Graph' : 'Neural_History'}
             </h2>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-4">
+              {activeTab !== 'wiki' && (
+                <button 
+                  onClick={() => setActiveTab('wiki')}
+                  className="text-[9px] font-mono text-purple-400 hover:text-purple-300 flex items-center gap-1"
+                >
+                  <Brain size={12} /> WIKI
+                </button>
+              )}
+              {activeTab === 'wiki' && (
+                <button 
+                  onClick={() => setActiveTab('history')}
+                  className="text-[9px] font-mono text-[#00FFDD] hover:text-[#00FFDD]/80 flex items-center gap-1"
+                >
+                  <TerminalIcon size={12} /> LOG
+                </button>
+              )}
+              <div className="flex items-center gap-2">
               <div className={`w-1.5 h-1.5 rounded-full ${isConnected ? 'bg-[#00FFDD] animate-pulse' : 'bg-zinc-800'}`} />
               <span className="text-[9px] font-mono text-zinc-600 uppercase">{sessionId || 'OFFLINE'}</span>
+              </div>
             </div>
           </div>
 
-          <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-6">
-            {history.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center opacity-20 gap-3 grayscale">
-                <Brain size={48} strokeWidth={0.5} />
-                <p className="text-[10px] font-mono uppercase tracking-widest">Awaiting_Interaction</p>
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
+            {activeTab === 'wiki' ? (
+              <div className="space-y-4">
+                {wikiEntries.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center opacity-20 gap-3 grayscale pt-20">
+                    <CloudRain size={48} strokeWidth={0.5} />
+                    <p className="text-[10px] font-mono uppercase tracking-widest text-center">Awaiting_Neural_Synthesis<br/>Study to generate knowledge</p>
+                  </div>
+                ) : (
+                  <div className="grid gap-3">
+                    {wikiEntries.map(entry => (
+                      <motion.div 
+                        key={entry.id}
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        onClick={() => setSelectedWikiEntry(selectedWikiEntry === entry.id ? null : entry.id)}
+                        className={`p-3 rounded-xl border cursor-pointer transition-all ${selectedWikiEntry === entry.id ? 'bg-purple-500/10 border-purple-500/40' : 'bg-white/5 border-white/5 hover:border-purple-500/20'}`}
+                      >
+                        <div className="flex justify-between items-center mb-2">
+                          <span className="text-[8px] font-mono text-purple-400 uppercase tracking-tighter">{entry.category || 'Concept'}</span>
+                          <span className="text-[8px] font-mono text-zinc-600">{new Date(entry.lastUpdated.toDate?.() || entry.lastUpdated).toLocaleDateString()}</span>
+                        </div>
+                        <h3 className="text-xs font-bold text-white mb-1">{entry.title}</h3>
+                        {selectedWikiEntry === entry.id ? (
+                          <div className="text-[10px] leading-relaxed text-zinc-300 space-y-2 mt-2 border-t border-white/5 pt-2">
+                             <div className="prose prose-invert prose-xs">
+                               {entry.content}
+                             </div>
+                             {entry.relatedConcepts && entry.relatedConcepts.length > 0 && (
+                               <div className="flex flex-wrap gap-1 mt-3">
+                                 {entry.relatedConcepts.map(link => (
+                                   <span key={link} className="px-1.5 py-0.5 rounded-full bg-purple-500/20 text-purple-300 text-[8px] font-mono">
+                                     #{link}
+                                   </span>
+                                 ))}
+                               </div>
+                             )}
+                          </div>
+                        ) : (
+                          <p className="text-[10px] text-zinc-500 line-clamp-1">{entry.content}</p>
+                        )}
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
               </div>
             ) : (
-              history.map((msg, idx) => (
-                <div key={idx} className={`space-y-1 ${msg.role === 'assistant' ? 'border-l border-[#F27D26]/20 pl-4' : ''}`}>
-                  <div className="flex items-center justify-between">
-                    <span className={`text-[9px] font-mono font-bold tracking-tighter ${msg.role === 'user' ? 'text-zinc-500' : (msg.type === 'local' ? 'text-[#00FFDD]' : 'text-[#F27D26]')}`}>
-                      {msg.role === 'user' ? 'AUTH_USER' : (msg.type === 'local' ? 'NODE_G4' : 'CLOUD_G1')}
-                    </span>
-                    <span className="text-[8px] font-mono text-zinc-800">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+              <div className="space-y-6">
+                {history.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center opacity-20 gap-3 grayscale">
+                    <Brain size={48} strokeWidth={0.5} />
+                    <p className="text-[10px] font-mono uppercase tracking-widest">Awaiting_Interaction</p>
                   </div>
-                  <div className={`text-xs leading-relaxed ${msg.role === 'user' ? 'text-zinc-400' : 'text-zinc-200'}`}>
-                    {msg.content}
+                ) : (
+                  history.map((msg, idx) => (
+                    <div key={idx} className={`space-y-1 ${msg.role === 'assistant' ? 'border-l border-[#F27D26]/20 pl-4' : ''}`}>
+                      <div className="flex items-center justify-between">
+                        <span className={`text-[9px] font-mono font-bold tracking-tighter ${msg.role === 'user' ? 'text-zinc-500' : (msg.type === 'local' ? 'text-[#00FFDD]' : 'text-[#F27D26]')}`}>
+                          {msg.role === 'user' ? 'AUTH_USER' : (msg.type === 'local' ? 'NODE_G4' : 'CLOUD_G1')}
+                        </span>
+                        <span className="text-[8px] font-mono text-zinc-800">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                      </div>
+                      <div className={`text-xs leading-relaxed ${msg.role === 'user' ? 'text-zinc-400' : 'text-zinc-200'}`}>
+                        {msg.content}
+                      </div>
+                    </div>
+                  ))
+                )}
+                
+                {/* Live Streaming Indicator */}
+                {(localResponse || cloudResponse) && (
+                  <div className="space-y-1 border-l border-[#00FFDD]/20 pl-4">
+                    <div className="flex items-center justify-between">
+                      <span className={`text-[9px] font-mono font-bold tracking-tighter ${isLocalMode ? 'text-[#00FFDD]' : 'text-[#F27D26]'}`}>
+                        {isLocalMode ? 'NODE_G4' : 'CLOUD_G1'}
+                      </span>
+                      <span className="text-[8px] font-mono text-zinc-500 animate-pulse">STREAMING...</span>
+                    </div>
+                    <div className="text-xs text-zinc-200 leading-relaxed">
+                      {isLocalMode ? localResponse : cloudResponse}
+                      <span className={`inline-block w-1 h-3 ml-1 animate-pulse ${isLocalMode ? 'bg-[#00FFDD]' : 'bg-[#F27D26]'}`} />
+                    </div>
                   </div>
-                </div>
-              ))
-            )}
-            
-            {/* Live Streaming Indicator */}
-            {(localResponse || cloudResponse) && (
-              <div className="space-y-1 border-l border-[#00FFDD]/20 pl-4">
-                <div className="flex items-center justify-between">
-                  <span className={`text-[9px] font-mono font-bold tracking-tighter ${isLocalMode ? 'text-[#00FFDD]' : 'text-[#F27D26]'}`}>
-                    {isLocalMode ? 'NODE_G4' : 'CLOUD_G1'}
-                  </span>
-                  <span className="text-[8px] font-mono text-zinc-500 animate-pulse">STREAMING...</span>
-                </div>
-                <div className="text-xs text-zinc-200 leading-relaxed">
-                  {isLocalMode ? localResponse : cloudResponse}
-                  <span className={`inline-block w-1 h-3 ml-1 animate-pulse ${isLocalMode ? 'bg-[#00FFDD]' : 'bg-[#F27D26]'}`} />
-                </div>
+                )}
+                <div ref={terminalEndRef} />
               </div>
             )}
-            <div ref={terminalEndRef} />
           </div>
 
           {/* Quick Input (Desktop/History Tab Only) */}
@@ -628,7 +718,80 @@ export default function Dashboard() {
                   </div>
                 )}
 
-                {/* Environment Controls */}
+                {/* Active Recall Overlay */}
+      <AnimatePresence>
+        {activeQuestion && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-xl flex items-center justify-center p-6"
+          >
+            <motion.div 
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              className="w-full max-w-lg bg-zinc-900 border border-purple-500/30 rounded-3xl overflow-hidden shadow-2xl shadow-purple-500/10"
+            >
+              <div className="p-8 space-y-6">
+                <div className="flex items-center gap-3 text-purple-400">
+                  <Brain className="animate-pulse" />
+                  <span className="text-[10px] font-mono uppercase tracking-[0.2em]">Active_Recall_Phase</span>
+                </div>
+                
+                <h2 className="text-2xl font-bold text-white leading-tight">
+                  {activeQuestion.question}
+                </h2>
+
+                <div className="space-y-4 pt-4">
+                  <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest">Self-Evaluate Performance:</p>
+                  <div className="grid grid-cols-2 gap-3">
+                    <button 
+                      onClick={() => submitAnswer(activeQuestion.id, 'easy')}
+                      className="p-4 rounded-2xl bg-green-500/10 border border-green-500/20 hover:bg-green-500/20 transition-all text-left"
+                    >
+                      <div className="text-xs font-bold text-green-400">EASY</div>
+                      <div className="text-[10px] text-green-700">Mastered</div>
+                    </button>
+                    <button 
+                      onClick={() => submitAnswer(activeQuestion.id, 'good')}
+                      className="p-4 rounded-2xl bg-blue-500/10 border border-blue-500/20 hover:bg-blue-500/20 transition-all text-left"
+                    >
+                      <div className="text-xs font-bold text-blue-400">GOOD</div>
+                      <div className="text-[10px] text-blue-700">Remembered</div>
+                    </button>
+                    <button 
+                      onClick={() => submitAnswer(activeQuestion.id, 'hard')}
+                      className="p-4 rounded-2xl bg-yellow-500/10 border border-yellow-500/20 hover:bg-yellow-500/20 transition-all text-left"
+                    >
+                      <div className="text-xs font-bold text-yellow-400">HARD</div>
+                      <div className="text-[10px] text-yellow-700">Struggled</div>
+                    </button>
+                    <button 
+                      onClick={() => submitAnswer(activeQuestion.id, 'again')}
+                      className="p-4 rounded-2xl bg-red-500/10 border border-red-500/20 hover:bg-red-500/20 transition-all text-left"
+                    >
+                      <div className="text-xs font-bold text-red-400">AGAIN</div>
+                      <div className="text-[10px] text-red-700">Forgot</div>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="pt-6 border-t border-white/5 flex justify-between items-center">
+                   <button 
+                    onClick={() => setActiveQuestion(null)}
+                    className="text-[10px] font-mono text-zinc-600 hover:text-zinc-400 uppercase"
+                   >
+                     Skip_Phase
+                   </button>
+                   <span className="text-[10px] font-mono text-purple-900">NEXUS_RECALL_V1</span>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Control Bar (Center) */}
                 <div>
                    <h3 className="text-sm font-mono tracking-widest text-zinc-500 mb-4 flex items-center gap-2">
                      <Volume2 size={14} /> AMBIENT NOISE

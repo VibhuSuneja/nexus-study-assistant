@@ -52,6 +52,55 @@ export const tools = [
         },
       },
       {
+        name: "upsertWikiEntry",
+        description: "Creates or updates a concept entry in the Neural Wiki knowledge base.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            title: {
+              type: Type.STRING,
+              description: "The name of the concept (e.g. 'Backpropagation').",
+            },
+            content: {
+              type: Type.STRING,
+              description: "Markdown formatted summary of the concept.",
+            },
+            relatedConcepts: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+              description: "List of related concept titles to link to.",
+            },
+            category: {
+              type: Type.STRING,
+              description: "Category like 'Law', 'Business', 'Math', etc.",
+            }
+          },
+          required: ["title", "content"],
+        },
+      },
+      {
+        name: "generateRecallQuestion",
+        description: "Generates an active recall question for the user based on recent learning.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            question: {
+              type: Type.STRING,
+              description: "The probing question to ask the user.",
+            },
+            answerKey: {
+              type: Type.STRING,
+              description: "The correct answer or key points the user should mention.",
+            },
+            conceptId: {
+              type: Type.STRING,
+              description: "The title of the wiki concept this question relates to.",
+            }
+          },
+          required: ["question", "answerKey"],
+        },
+      },
+      {
         name: "syncWithMCP",
         description: "Mocks synchronization with external MCP connected apps (like Calendar, Notion, VSCode) and updates the local state.",
         parameters: {
