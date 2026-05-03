@@ -221,7 +221,6 @@ export default function Dashboard({ onNavigateToAudio }: DashboardProps) {
               </button>
             </div>
           )}
-          </div>
         </div>
       </header>
 

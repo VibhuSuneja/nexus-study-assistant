@@ -1,8 +1,11 @@
 import { useState, useEffect } from 'react';
-import { db, auth, storage } from '../lib/firebase';
+import { db, auth, storage, functions } from '../lib/firebase';
+import { httpsCallable } from 'firebase/functions';
+
 import { collection, query, onSnapshot, addDoc, updateDoc, doc, setDoc, orderBy, getDocs, where } from 'firebase/firestore';
 import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
 import { ref, uploadString, getDownloadURL } from 'firebase/storage';
+
 
 export interface WikiEntry {
   id: string;
@@ -13,7 +16,9 @@ export interface WikiEntry {
   lastUpdated: any;
   masteryScore: number;
   imageUrl?: string;
+  embedding?: number[]; // Represented as number array on frontend
 }
+
 
 export function useNeuralWiki() {
   const [entries, setEntries] = useState<WikiEntry[]>([]);
@@ -54,7 +59,6 @@ export function useNeuralWiki() {
       if (args.frame) {
         try {
           const imageRef = ref(storage, `wiki/${user.uid}/${Date.now()}.jpg`);
-          // Note: frame is usually base64. Ensure correct format.
           const uploadResult = await uploadString(imageRef, args.frame, 'base64');
           imageUrl = await getDownloadURL(uploadResult.ref);
         } catch (imgErr) {
@@ -63,7 +67,6 @@ export function useNeuralWiki() {
       }
 
       const wikiColl = collection(db, `users/${user.uid}/wiki`);
-      // Check if entry with this title already exists
       const q = query(wikiColl, where("title", "==", args.title));
       const existing = await getDocs(q);
 
@@ -111,7 +114,6 @@ export function useNeuralWiki() {
         const data = entryDoc.data();
         await updateDoc(doc(db, `users/${user.uid}/wiki`, entryDoc.id), {
           masteryScore: args.masteryScore,
-          // Append gaps to content or maybe store them in a new field if we want
           content: args.gaps && args.gaps.length > 0 
             ? `${data.content}\n\n### Identified Gaps:\n${args.gaps.map(g => `- ${g}`).join('\n')}`
             : data.content
@@ -125,10 +127,48 @@ export function useNeuralWiki() {
     }
   };
 
+  /**
+   * Performs a semantic search across the wiki entries via Cloud Function.
+   * Prioritizes notes that link to the current context.
+   */
+  const semanticSearch = async (queryText: string, nexusContext?: { course?: string, activeTask?: string }) => {
+    if (!user) return [];
+    
+    try {
+      // Use the semanticWikiSearch cloud function to perform vector search on the server
+      const searchFn = httpsCallable(functions, 'semanticWikiSearch');
+      const response: any = await searchFn({ queryText, limit: 10 });
+      
+      let results = response.data.results as WikiEntry[];
+      if (!results) return [];
+
+      // Prioritize based on NexusContext
+      if (nexusContext) {
+        results = results.sort((a, b) => {
+          const aMatch = (nexusContext.course && a.category === nexusContext.course) || 
+                         (nexusContext.activeTask && a.title.includes(nexusContext.activeTask));
+          const bMatch = (nexusContext.course && b.category === nexusContext.course) || 
+                         (nexusContext.activeTask && b.title.includes(nexusContext.activeTask));
+          
+          if (aMatch && !bMatch) return -1;
+          if (!aMatch && bMatch) return 1;
+          return 0;
+        });
+      }
+
+      return results;
+    } catch (e) {
+      console.error("Semantic Search Error:", e);
+      return [];
+    }
+  };
+
   return {
     entries,
     isSyncing,
     upsertWikiEntry,
-    updateMastery
+    updateMastery,
+    semanticSearch
   };
 }
+

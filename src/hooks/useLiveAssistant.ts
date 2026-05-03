@@ -80,16 +80,17 @@ export function useLiveAssistant(
         await window.aistudio.openSelectKey();
       }
 
-      const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
       const ai = new GoogleGenAI({ apiKey });
       
       audioStreamer.current = new AudioStreamer();
       screenStreamer.current = new ScreenStreamer();
 
       audioStreamer.current.initOutput();
+      await audioStreamer.current.resumeOutput();
 
       const sessionPromise = ai.live.connect({
-        model: "gemini-3.1-flash-live-preview",
+        model: "gemini-2.0-flash-exp",
         config: {
           responseModalities: [Modality.AUDIO],
           systemInstruction: isGhostMode ? `You are a Ghost Student — an AI studying alongside the user using the Feynman Technique.

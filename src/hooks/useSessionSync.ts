@@ -1,9 +1,12 @@
-import { useState, useEffect, useCallback } from 'react';
-import { doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
+import { useState, useEffect, useCallback, useContext } from 'react';
+import { doc, onSnapshot, setDoc, updateDoc, arrayUnion } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { useNexus } from '../context/NexusContext';
 
 export function useSessionSync() {
+  const { focusState, sessionType } = useNexus();
   const [sessionId, setSessionId] = useState<string | null>(localStorage.getItem('nexus_session_id'));
+  // ... rest of state ...
   const [remoteFrame, setRemoteFrame] = useState<string | null>(null);
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [history, setHistory] = useState<any[]>([]);
@@ -57,22 +60,38 @@ export function useSessionSync() {
           name: deviceName,
           ip: publicIp,
           lastActive: new Date(),
-          currentSession: sessionId
+          currentSession: sessionId,
+          focusState,
+          sessionType
         }, { merge: true });
       };
 
       updatePresence();
       const interval = setInterval(updatePresence, 30000); // Pulse every 30s
 
+      // Update the discovery document with our info
+      const discRef = doc(db, "discovery", publicIp.replace(/\./g, '_'));
+      const updateDisc = () => {
+        const discData = {
+          name: deviceName,
+          lastActive: new Date().toISOString(),
+          currentSession: sessionId,
+          focusState,
+          sessionType
+        };
+        
+        updateDoc(discRef, {
+          [deviceId]: discData
+        }).catch(() => {
+          setDoc(discRef, { [deviceId]: discData });
+        });
+      };
+
+      updateDisc();
+      const discInterval = setInterval(updateDisc, 15000);
+
       // Listen for other nodes on the same IP
-      const q = doc(db, "nodes", "metadata"); // This is a dummy to trigger listener or use collection query
-      // Actually we need a collection query to find nodes with same IP
-      // But for simplicity in this prototype, we'll listen to a shared discovery doc or 
-      // just list all nodes and filter locally if rules allow.
-      
-      // Better: Use a collection listener (requires indexing if filtered, but we'll filter locally)
-      // Note: In production you'd use a cloud function or proper indexing.
-      const nodesUnsub = onSnapshot(doc(db, "discovery", publicIp.replace(/\./g, '_')), (doc) => {
+      const nodesUnsub = onSnapshot(discRef, (doc) => {
         if (doc.exists()) {
           const data = doc.data();
           const nodes = Object.entries(data)
@@ -83,29 +102,6 @@ export function useSessionSync() {
         }
       });
 
-      // Update the discovery document with our info
-      const discRef = doc(db, "discovery", publicIp.replace(/\./g, '_'));
-      const updateDisc = () => {
-        updateDoc(discRef, {
-          [deviceId]: {
-            name: deviceName,
-            lastActive: new Date().toISOString(),
-            currentSession: sessionId
-          }
-        }).catch(() => {
-          // If doc doesn't exist, create it
-          setDoc(discRef, {
-            [deviceId]: {
-              name: deviceName,
-              lastActive: new Date().toISOString(),
-              currentSession: sessionId
-            }
-          });
-        });
-      };
-      updateDisc();
-      const discInterval = setInterval(updateDisc, 20000);
-
       return () => {
         clearInterval(interval);
         clearInterval(discInterval);
@@ -114,7 +110,7 @@ export function useSessionSync() {
     };
 
     getIpAndRegister();
-  }, [deviceId, sessionId]);
+  }, [deviceId, sessionId, focusState, sessionType]);
 
   const createSession = useCallback(async () => {
     try {
@@ -145,15 +141,12 @@ export function useSessionSync() {
   const addMessageToHistory = useCallback(async (role: 'user' | 'assistant', content: string, type: 'local' | 'cloud' = 'cloud') => {
     if (!sessionId) return;
     try {
-      // Use the functional state to get most recent history for atomicity
       const sessionRef = doc(db, "sessions", sessionId);
       const newMessage = { role, content, type, timestamp: new Date().toISOString() };
       
-      // Fetch current doc to append (simpler than arrayUnion for structured logs)
-      setHistory(prev => {
-        const updated = [...prev, newMessage].slice(-50); // Keep last 50 messages
-        updateDoc(sessionRef, { history: updated });
-        return updated;
+      // Atomic append to Firestore; onSnapshot will update the local 'history' state
+      await updateDoc(sessionRef, {
+        history: arrayUnion(newMessage)
       });
     } catch (e) {
       console.error("Error saving message:", e);

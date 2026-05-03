@@ -3,6 +3,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { useTexture, PerspectiveCamera, Environment, ContactShadows } from '@react-three/drei';
 import * as THREE from 'three';
 import { motion, AnimatePresence } from 'motion/react';
+import { useNexus } from '../context/NexusContext';
 
 interface FaceProps {
   volume: number;
@@ -12,10 +13,18 @@ interface FaceProps {
 }
 
 function AvatarFace({ volume, isConnected, isConnecting, isGhostMode }: FaceProps) {
+  const { focusState } = useNexus();
   const texture = useTexture('/avatar.jpg');
   const groupRef = useRef<THREE.Group>(null);
   const upperFaceRef = useRef<THREE.Mesh>(null);
   const lowerJawRef = useRef<THREE.Mesh>(null);
+
+  const stateColors = {
+    attentive: "#00FFDD",
+    distracted: "#FF4B2B",
+    resting: "#8B5CF6",
+    neutral: "#ffffff"
+  };
 
   useFrame((state, delta) => {
     const t = state.clock.elapsedTime;
@@ -23,12 +32,18 @@ function AvatarFace({ volume, isConnected, isConnecting, isGhostMode }: FaceProp
     
     if (groupRef.current) {
       // Gentle floating animation
-      groupRef.current.position.y = Math.sin(t * 0.8) * 0.1;
+      const floatSpeed = focusState === 'attentive' ? 1.2 : focusState === 'distracted' ? 2.5 : 0.6;
+      const floatAmp = focusState === 'attentive' ? 0.1 : focusState === 'distracted' ? 0.2 : 0.05;
+      
+      groupRef.current.position.y = Math.sin(t * floatSpeed) * floatAmp;
       groupRef.current.rotation.y = Math.sin(t * 0.4) * 0.05;
 
-      // "Speaking" jitters
-      if (isSpeaking) {
-        groupRef.current.rotation.z = Math.sin(t * 20) * 0.02; // Fast subtle shake
+      // Focus-based jitter or calm
+      if (focusState === 'distracted') {
+        groupRef.current.rotation.z = Math.sin(t * 10) * 0.05;
+        groupRef.current.position.x = Math.sin(t * 8) * 0.03;
+      } else if (isSpeaking) {
+        groupRef.current.rotation.z = Math.sin(t * 20) * 0.02; 
         groupRef.current.position.x = Math.sin(t * 15) * 0.02;
       } else {
         groupRef.current.rotation.z = THREE.MathUtils.lerp(groupRef.current.rotation.z, 0, 0.1);
@@ -72,9 +87,9 @@ function AvatarFace({ volume, isConnected, isConnecting, isGhostMode }: FaceProp
       <mesh position={[0, 0, -0.05]}>
         <circleGeometry args={[2.1, 64]} />
         <meshBasicMaterial 
-          color={isGhostMode ? "#8B5CF6" : isConnected ? "#00FFDD" : isConnecting ? "#F27D26" : "#ffffff"} 
+          color={isGhostMode ? "#8B5CF6" : isConnected ? stateColors[focusState] : isConnecting ? "#F27D26" : stateColors.neutral} 
           transparent 
-          opacity={0.15}
+          opacity={focusState === 'distracted' ? 0.4 : 0.15}
         />
       </mesh>
     </group>
@@ -82,12 +97,21 @@ function AvatarFace({ volume, isConnected, isConnecting, isGhostMode }: FaceProp
 }
 
 export default function Face3D({ volume, isConnected, isConnecting, isGhostMode, onClick }: FaceProps & { onClick: () => void }) {
+  const { focusState } = useNexus();
+  
+  const stateGlows = {
+    attentive: 'bg-[#00FFDD]/15',
+    distracted: 'bg-[#FF4B2B]/20 animate-pulse',
+    resting: 'bg-[#8B5CF6]/15',
+    none: 'bg-white/5'
+  };
+
   return (
     <div className="w-full aspect-square cursor-pointer relative group" onClick={onClick}>
       {/* Background Ambient Glow */}
       <div className={`absolute inset-0 rounded-full blur-[100px] transition-all duration-1000 ${
         isGhostMode && isConnected ? 'bg-[#8B5CF6]/20 opacity-100 scale-125' :
-        isConnected ? 'bg-[#00FFDD]/15 opacity-100 scale-125' : 
+        isConnected ? `${stateGlows[focusState]} opacity-100 scale-125` : 
         isConnecting ? 'bg-[#F27D26]/15 opacity-100 scale-110' : 
         'bg-white/5 opacity-20 scale-100'
       }`} />
@@ -124,10 +148,18 @@ export default function Face3D({ volume, isConnected, isConnecting, isGhostMode,
       <div className="absolute top-0 right-0 p-4 flex flex-col items-end gap-1">
         {isConnected && (
           <div className="flex items-center gap-2">
-            <span className={`text-[8px] font-mono uppercase tracking-widest ${isGhostMode ? 'text-[#8B5CF6]' : 'text-[#00FFDD]'}`}>
-              {isGhostMode ? 'GHOST_STUDENT' : 'Live_Pulse'}
+            <span className={`text-[8px] font-mono uppercase tracking-widest ${
+              isGhostMode ? 'text-[#8B5CF6]' : 
+              focusState === 'attentive' ? 'text-[#00FFDD]' : 
+              focusState === 'distracted' ? 'text-[#FF4B2B]' : 'text-[#8B5CF6]'
+            }`}>
+              {isGhostMode ? 'GHOST_STUDENT' : focusState === 'attentive' ? 'FOCUS_ACTIVE' : focusState === 'distracted' ? 'ATTENTION_DRIFT' : 'REST_MODE'}
             </span>
-            <div className={`w-1.5 h-1.5 rounded-full animate-ping ${isGhostMode ? 'bg-[#8B5CF6]' : 'bg-[#00FFDD]'}`} />
+            <div className={`w-1.5 h-1.5 rounded-full ${focusState === 'distracted' ? 'animate-bounce' : 'animate-ping'} ${
+              isGhostMode ? 'bg-[#8B5CF6]' : 
+              focusState === 'attentive' ? 'bg-[#00FFDD]' : 
+              focusState === 'distracted' ? 'bg-[#FF4B2B]' : 'bg-[#8B5CF6]'
+            }`} />
           </div>
         )}
         {isConnecting && (

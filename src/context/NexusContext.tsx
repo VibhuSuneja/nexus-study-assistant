@@ -8,9 +8,18 @@ interface NexusContextType {
   setIsRunning: (running: boolean) => void;
   isLockedIn: boolean;
   setIsLockedIn: (locked: boolean) => void;
+  sessionType: 'work' | 'break' | 'longBreak';
+  setSessionType: (type: 'work' | 'break' | 'longBreak') => void;
+  focusState: 'attentive' | 'distracted' | 'resting';
+  setFocusState: (state: 'attentive' | 'distracted' | 'resting') => void;
+  activeCourse: string | null;
+  setActiveCourse: (course: string | null) => void;
+  activeTask: string | null;
+  setActiveTask: (taskId: string | null) => void;
+
   startTimer: (duration?: number) => void;
   pauseTimer: () => void;
-  resetTimer: (duration?: number) => void;
+  resetTimer: (duration?: number, type?: 'work' | 'break' | 'longBreak') => void;
   toggleTimer: () => void;
   formatTime: (secs: number) => string;
 }
@@ -21,26 +30,38 @@ export function NexusProvider({ children }: { children: React.ReactNode }) {
   const [secondsRemaining, setSecondsRemaining] = useState(25 * 60);
   const [isRunning, setIsRunning] = useState(false);
   const [isLockedIn, setIsLockedIn] = useState(false);
-  
+  const [sessionType, setSessionType] = useState<'work' | 'break' | 'longBreak'>('work');
+  const [focusState, setFocusState] = useState<'attentive' | 'distracted' | 'resting'>('resting');
+  const [activeCourse, setActiveCourse] = useState<string | null>(null);
+  const [activeTask, setActiveTask] = useState<string | null>(null);
+
+
   const timerRef = useRef<number | null>(null);
+
 
   const toggleTimer = useCallback(() => {
     setSecondsRemaining(prev => prev <= 0 ? 25 * 60 : prev);
     setIsRunning(prev => !prev);
-  }, []);
+    if (!isRunning) setFocusState('attentive');
+    else setFocusState('resting');
+  }, [isRunning]);
 
   const startTimer = useCallback((durationMinutes?: number) => {
     if (durationMinutes) setSecondsRemaining(durationMinutes * 60);
     setIsRunning(true);
+    setFocusState('attentive');
   }, []);
 
   const pauseTimer = useCallback(() => {
     setIsRunning(false);
+    setFocusState('resting');
   }, []);
 
-  const resetTimer = useCallback((durationMinutes: number = 25) => {
+  const resetTimer = useCallback((durationMinutes: number = 25, type: 'work' | 'break' | 'longBreak' = 'work') => {
     setIsRunning(false);
     setSecondsRemaining(durationMinutes * 60);
+    setSessionType(type);
+    setFocusState(type === 'work' ? 'attentive' : 'resting');
   }, []);
 
   // Centralized Timer Interval
@@ -87,12 +108,15 @@ export function NexusProvider({ children }: { children: React.ReactNode }) {
   return (
     <NexusContext.Provider value={{
       secondsRemaining, setSecondsRemaining, isRunning, setIsRunning, isLockedIn, setIsLockedIn,
+      sessionType, setSessionType, focusState, setFocusState, 
+      activeCourse, setActiveCourse, activeTask, setActiveTask,
       startTimer, pauseTimer, resetTimer, toggleTimer, formatTime
     }}>
       {children}
     </NexusContext.Provider>
   );
 }
+
 
 export const useNexus = () => {
   const context = useContext(NexusContext);
