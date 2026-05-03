@@ -101,6 +101,29 @@ export const tools = [
         },
       },
       {
+        name: "updateConceptMastery",
+        description: "Updates the mastery score for a Neural Wiki concept after the user explains it.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            conceptTitle: {
+              type: Type.STRING,
+              description: "The title of the concept being evaluated.",
+            },
+            masteryScore: {
+              type: Type.NUMBER,
+              description: "A score from 0 to 100 representing how well the user explained the concept.",
+            },
+            gaps: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+              description: "List of gaps or misunderstandings in the user's explanation.",
+            }
+          },
+          required: ["conceptTitle", "masteryScore"],
+        },
+      },
+      {
         name: "syncWithMCP",
         description: "Mocks synchronization with external MCP connected apps (like Calendar, Notion, VSCode) and updates the local state.",
         parameters: {
@@ -112,6 +135,22 @@ export const tools = [
             },
           },
           required: ["appName"],
+        },
+      },
+      {
+        name: "startTimer",
+        description: "Starts or resumes the pomodoro/focus timer.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {},
+        },
+      },
+      {
+        name: "stopTimer",
+        description: "Pauses the pomodoro/focus timer.",
+        parameters: {
+          type: Type.OBJECT,
+          properties: {},
         },
       }
     ],

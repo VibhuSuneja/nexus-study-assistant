@@ -1,71 +1,138 @@
 import { useCallback, useEffect, useState, useRef } from "react";
-import { Mic, MicOff, Settings, Calendar, Play, Pause, Activity, Lock, Unlock, X, CloudRain, Coffee, Waves, Volume2, CheckCircle2, Circle, ListTodo, Timer, Monitor, Terminal as TerminalIcon, Brain } from "lucide-react";
+import { Mic, MicOff, Settings, Calendar, Play, Pause, Activity, Lock, Unlock, X, CheckCircle2, Circle, ListTodo, Timer, Monitor, Terminal as TerminalIcon, Brain } from "lucide-react";
 import { useLiveAssistant } from "../hooks/useLiveAssistant";
 import { useTasks } from "../hooks/useTasks";
 import { useLocalGemma } from "../hooks/useLocalGemma";
 import { useSessionSync } from "../hooks/useSessionSync";
 import { useNeuralWiki } from "../hooks/useNeuralWiki";
 import { useActiveRecall } from "../hooks/useActiveRecall";
+import { useNexus } from "../context/NexusContext";
 import { motion, AnimatePresence } from "motion/react";
 
 import Face3D from "./Face3D";
 
-export default function Dashboard() {
-  const { tasks, updateTask, toolHandlers, focusTask, focusDuration, setFocusTask } = useTasks();
+interface DashboardProps {
+  onNavigateToAudio: () => void;
+}
+
+export default function Dashboard({ onNavigateToAudio }: DashboardProps) {
+  // 1. Hooks and State at the top
+  const { tasks, updateTask, toolHandlers, focusTask, focusDuration, setFocusTask, setFocusDuration } = useTasks();
   const { sessionId, remoteFrame, createSession, joinSession, broadcastFrame, isBroadcasting, setIsBroadcasting, history, addMessageToHistory, disconnectSession, nearbyNodes } = useSessionSync();
   const { entries: wikiEntries, upsertWikiEntry, isSyncing: isWikiSyncing } = useNeuralWiki();
   const { questions: recallQueue, activeQuestion, setActiveQuestion, generateRecallQuestion, submitAnswer } = useActiveRecall();
   const { isLoaded: isLocalGemmaLoaded, generateResponse: generateLocalResponse, isProcessing: isLocalProcessing, mode, activeModel, customIp, updateIp } = useLocalGemma();
-
+  const { 
+    secondsRemaining, setSecondsRemaining, isRunning: isTimerRunning, setIsRunning: setIsTimerRunning,
+    isLockedIn, setIsLockedIn, toggleTimer, formatTime 
+  } = useNexus();
+  
   const [isLocalMode, setIsLocalMode] = useState(false);
-  
-  const processToolCall = useCallback(async (name: string, args: any) => {
-    console.log("Tool called by Assistant:", name, args);
-    const allHandlers = {
-      ...toolHandlers,
-      upsertWikiEntry,
-      generateRecallQuestion
-    };
-    const handler = (allHandlers as any)[name];
-    if (handler) {
-      return handler(args);
-    }
-    return { error: "Unknown tool" };
-  }, [toolHandlers, upsertWikiEntry, generateRecallQuestion]);
-
-  const { startSession, stopSession, isConnected, isConnecting, volume, isScreenSharing, startScreenSharing, stopScreenSharing, getLastFrame, sendTextMessage } = useLiveAssistant(processToolCall, remoteFrame);
-  
+  const [isGhostMode, setIsGhostMode] = useState(false);
   const [isEditingIp, setIsEditingIp] = useState(false);
   const [sessionInput, setSessionInput] = useState("");
-  
   const [time, setTime] = useState(new Date().toLocaleTimeString('en-US', { hour12: false }));
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [localResponse, setLocalResponse] = useState<string>("");
   const [cloudResponse, setCloudResponse] = useState<string>("");
-  const [isLockedIn, setIsLockedIn] = useState(false);
-  const [secondsRemaining, setSecondsRemaining] = useState(0);
-  const [isTimerRunning, setIsTimerRunning] = useState(false);
-  
-  // Ref for auto-scrolling terminal
-  const terminalEndRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [history, localResponse, cloudResponse]);
-  
-  const [activeNoise, setActiveNoise] = useState<string | null>(null);
-  
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [isMCPOpen, setIsMCPOpen] = useState(false);
   const [isFullscreenVision, setIsFullscreenVision] = useState(false);
   const [activeTab, setActiveTab] = useState<'tasks' | 'vision' | 'history' | 'wiki'>('vision');
   const [selectedWikiEntry, setSelectedWikiEntry] = useState<string | null>(null);
 
+  // 2. Refs for values that change frequently but shouldn't trigger handler recreation
+  const remoteFrameRef = useRef(remoteFrame);
   useEffect(() => {
-    // Automatically trigger active recall if a question is due during a focus session
-    if (focusTask && recallQueue.length > 0 && !activeQuestion) {
+    remoteFrameRef.current = remoteFrame;
+  }, [remoteFrame]);
+
+  const secondsRemainingRef = useRef(secondsRemaining);
+  useEffect(() => {
+    secondsRemainingRef.current = secondsRemaining;
+  }, [secondsRemaining]);
+
+  const screenStateRef = useRef({ isScreenSharing: false, getLastFrame: (() => null) as () => string | null });
+
+  // 3. The Tool Handler
+  const processToolCall = useCallback(async (name: string, args: any) => {
+    console.log("Tool execution requested:", name, args);
+    
+    const allHandlers = {
+      ...toolHandlers,
+      setFocusMode: (toolArgs: any) => {
+        const res = toolHandlers.setFocusMode(toolArgs);
+        // Immediately update global timer state to match focus mode
+        if (toolArgs.durationMinutes) {
+          const secs = toolArgs.durationMinutes * 60;
+          setSecondsRemaining(secs);
+          setIsTimerRunning(true);
+          setIsLockedIn(true);
+        } else {
+          setIsTimerRunning(true);
+          setIsLockedIn(true);
+        }
+        return res;
+      },
+      upsertWikiEntry: async (toolArgs: any) => {
+        const frame = screenStateRef.current.isScreenSharing ? screenStateRef.current.getLastFrame() : remoteFrameRef.current;
+        return upsertWikiEntry({ ...toolArgs, frame: frame || undefined });
+      },
+      generateRecallQuestion,
+      startTimer: () => {
+        setSecondsRemaining(prev => prev <= 0 ? 25 * 60 : prev);
+        setIsTimerRunning(true);
+        setIsLockedIn(true);
+        return { success: true, message: "Timer started and locked in." };
+      },
+      stopTimer: () => {
+        setIsTimerRunning(false);
+        return { success: true, message: "Timer paused successfully." };
+      },
+      updateConceptMastery: (toolArgs: any) => {
+        console.log("Concept mastery updated:", toolArgs);
+        return { success: true, message: "Mastery updated." };
+      }
+    };
+
+    const handler = (allHandlers as any)[name];
+    if (handler) {
+      try {
+        const result = await handler(args);
+        return result;
+      } catch (err) {
+        console.error(`Error executing tool ${name}:`, err);
+        return { error: String(err) };
+      }
+    }
+    return { error: `Tool ${name} not found.` };
+  }, [toolHandlers, upsertWikiEntry, generateRecallQuestion, setIsLockedIn]);
+
+  // 4. Assistant Hook
+  const assistantProps = useLiveAssistant(processToolCall, remoteFrame, isGhostMode);
+  const { 
+    startSession, stopSession, isConnected, isConnecting, volume, 
+    isScreenSharing, startScreenSharing, stopScreenSharing, 
+    getLastFrame, sendTextMessage 
+  } = assistantProps;
+  
+  // Sync screen state to ref for tools
+  useEffect(() => {
+    screenStateRef.current = { isScreenSharing, getLastFrame };
+  }, [isScreenSharing, getLastFrame]);
+
+  // 5. Other Effects
+  const terminalEndRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    terminalEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [history]);
+
+  useEffect(() => {
+    // Automatically trigger active recall ONLY during an active Lock In session
+    if (isLockedIn && recallQueue.length > 0 && !activeQuestion) {
       setActiveQuestion(recallQueue[0]);
     }
-  }, [focusTask, recallQueue, activeQuestion, setActiveQuestion]);
+  }, [isLockedIn, recallQueue, activeQuestion, setActiveQuestion]);
 
   const toggleSubtask = (taskId: string, subtaskId: string) => {
     const task = tasks.find(t => t.id === taskId);
@@ -79,27 +146,7 @@ export default function Dashboard() {
     if (focusDuration > 0) {
       setSecondsRemaining(focusDuration * 60);
     }
-  }, [focusDuration, focusTask]);
-
-  useEffect(() => {
-    let interval: any;
-    if (isTimerRunning && secondsRemaining > 0) {
-      interval = setInterval(() => {
-        setSecondsRemaining(prev => prev - 1);
-      }, 1000);
-    } else if (secondsRemaining === 0) {
-      setIsTimerRunning(false);
-    }
-    return () => clearInterval(interval);
-  }, [isTimerRunning, secondsRemaining]);
-
-  const toggleTimer = () => setIsTimerRunning(prev => !prev);
-
-  const formatTime = (secs: number) => {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
-  };
+  }, [focusDuration, focusTask, setSecondsRemaining]);
 
   const handleSyncMCP = () => {
     const result = toolHandlers.syncWithMCP({ appName: 'Calendar' });
@@ -144,7 +191,7 @@ export default function Dashboard() {
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <div className="absolute -top-[10%] -left-[10%] w-[40%] h-[40%] bg-[#F27D26]/5 blur-[120px] rounded-full" />
         <div className="absolute -bottom-[10%] -right-[10%] w-[40%] h-[40%] bg-[#00FFDD]/5 blur-[120px] rounded-full" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full h-full bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.03]" />
+        <div className="absolute top-0 w-full h-full bg-gradient-to-br from-[#121318] via-[#0D0E12] to-[#0A0B0E] -z-20" />
       </div>
 
       {/* Header: Status Bar */}
@@ -174,6 +221,7 @@ export default function Dashboard() {
               </button>
             </div>
           )}
+          </div>
         </div>
       </header>
 
@@ -210,14 +258,24 @@ export default function Dashboard() {
 
         {/* Left Column: Tasks & System (Hidden on mobile if not active) */}
         <div className={`w-full lg:w-80 flex flex-col border-r border-white/5 bg-[#0A0A0C]/50 ${activeTab === 'tasks' ? 'flex' : 'hidden lg:flex'}`}>
-          <div className="p-4 border-b border-white/5 flex justify-between items-center bg-black/20">
-            <h2 className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest flex items-center gap-2">
-              <ListTodo size={12} />
-              Active_Workload
-            </h2>
-            <button onClick={handleSyncMCP} className="text-[#00FFDD] hover:scale-110 transition-transform">
-              <Activity size={14} />
+          <div className="p-4 border-b border-white/5 bg-black/20">
+            <button 
+              onClick={() => setIsLockedIn(true)}
+              className="w-full py-3 mb-4 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center gap-3 hover:bg-white/10 hover:border-[#F27D26]/50 transition-all group"
+            >
+              <Timer size={18} className="text-[#F27D26] group-hover:animate-pulse" />
+              <span className="text-[10px] font-mono font-bold uppercase tracking-[0.2em] text-white">Enter_Focus_Hub</span>
             </button>
+
+            <div className="flex justify-between items-center">
+              <h2 className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest flex items-center gap-2">
+                <ListTodo size={12} />
+                Active_Workload
+              </h2>
+              <button onClick={handleSyncMCP} className="text-[#00FFDD] hover:scale-110 transition-transform">
+                <Activity size={14} />
+              </button>
+            </div>
           </div>
           
           <div className="flex-1 overflow-y-auto custom-scrollbar p-2">
@@ -480,7 +538,7 @@ export default function Dashboard() {
               <div className="space-y-4">
                 {wikiEntries.length === 0 ? (
                   <div className="h-full flex flex-col items-center justify-center opacity-20 gap-3 grayscale pt-20">
-                    <CloudRain size={48} strokeWidth={0.5} />
+                    <Brain size={48} strokeWidth={0.5} />
                     <p className="text-[10px] font-mono uppercase tracking-widest text-center">Awaiting_Neural_Synthesis<br/>Study to generate knowledge</p>
                   </div>
                 ) : (
@@ -500,8 +558,16 @@ export default function Dashboard() {
                         <h3 className="text-xs font-bold text-white mb-1">{entry.title}</h3>
                         {selectedWikiEntry === entry.id ? (
                           <div className="text-[10px] leading-relaxed text-zinc-300 space-y-2 mt-2 border-t border-white/5 pt-2">
-                             <div className="prose prose-invert prose-xs">
-                               {entry.content}
+                             <div className="font-mono text-[9px] whitespace-pre-wrap text-zinc-300 leading-5">
+                               {entry.content.split('\n').map((line, li) => {
+                                 if (line.startsWith('### ')) return <div key={li} className="text-purple-300 font-bold text-[10px] mt-2">{line.slice(4)}</div>;
+                                 if (line.startsWith('## ')) return <div key={li} className="text-purple-200 font-bold text-[11px] mt-3">{line.slice(3)}</div>;
+                                 if (line.startsWith('# ')) return <div key={li} className="text-white font-bold text-xs mt-3">{line.slice(2)}</div>;
+                                 if (line.startsWith('- ') || line.startsWith('* ')) return <div key={li} className="flex gap-1.5 ml-2"><span className="text-[#F27D26]">›</span><span>{line.slice(2).replace(/\*\*(.*?)\*\*/g, (_, t) => t)}</span></div>;
+                                 if (line.startsWith('```')) return <div key={li} className="bg-black/40 border border-white/5 rounded px-2 py-0.5 font-mono text-[8px] text-[#00FFDD]">{line.slice(3)}</div>;
+                                 const parts = line.split(/\*\*(.*?)\*\*/g);
+                                 return <div key={li}>{parts.map((p, pi) => pi % 2 === 1 ? <strong key={pi} className="text-white font-semibold">{p}</strong> : p)}</div>;
+                               })}
                              </div>
                              {entry.relatedConcepts && entry.relatedConcepts.length > 0 && (
                                <div className="flex flex-wrap gap-1 mt-3">
@@ -513,6 +579,7 @@ export default function Dashboard() {
                                </div>
                              )}
                           </div>
+
                         ) : (
                           <p className="text-[10px] text-zinc-500 line-clamp-1">{entry.content}</p>
                         )}
@@ -629,111 +696,7 @@ export default function Dashboard() {
         </div>
       </main>
 
-      {/* Lock In Overlay */}
-      <AnimatePresence>
-        {isLockedIn && currentFocusedTask && (
-          <motion.div 
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            className="fixed inset-0 z-50 bg-[#0C0C0E] flex flex-col items-center justify-center p-8 overflow-hidden"
-          >
-            {/* Ambient background effect */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[800px] h-[800px] bg-[#F27D26] opacity-5 blur-[150px] rounded-full pointer-events-none" />
-            
-            <button 
-              onClick={() => setIsLockedIn(false)}
-              className="absolute top-8 right-8 text-white opacity-50 hover:opacity-100 transition-opacity flex items-center gap-2 font-mono text-sm"
-            >
-              <X size={20} />
-              ABORT LOCK IN
-            </button>
-
-            <motion.div 
-              className="w-full max-w-5xl flex flex-col items-center z-10 grid grid-cols-1 lg:grid-cols-3 gap-12 text-left"
-              initial={{ scale: 0.95 }}
-              animate={{ scale: 1 }}
-              transition={{ type: "spring", stiffness: 300, damping: 30 }}
-            >
-              {/* Left Column: Task & Timer */}
-              <div className="lg:col-span-2 flex flex-col justify-center items-center lg:items-start text-center lg:text-left">
-                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-[#F27D26] bg-[#F27D26]/10 text-[#F27D26] font-mono text-sm mb-8 animate-pulse">
-                  <Lock size={14} />
-                  DEEP WORK MODE
-                </div>
-
-                <span className="font-mono text-xl text-[#F27D26] opacity-80 uppercase mb-4 tracking-widest">{currentFocusedTask.course}</span>
-                <h1 className="text-4xl md:text-5xl font-bold leading-tight mb-12">{currentFocusedTask.title}</h1>
-                
-                <div className="font-mono text-7xl md:text-9xl tracking-tighter tabular-nums mb-12 text-white font-light">
-                  {formatTime(secondsRemaining)}
-                </div>
-
-                <div className="flex gap-6 items-center">
-                  <button 
-                    onClick={toggleTimer}
-                    className={`w-20 h-20 rounded-full flex items-center justify-center transition-all hover:scale-105 active:scale-95 ${isTimerRunning ? 'border border-[#4A4B50] text-white hover:bg-[#2A2B30]' : 'bg-white text-black shadow-[0_0_40px_rgba(255,255,255,0.3)]'}`}
-                  >
-                    {isTimerRunning ? <Pause size={32} fill="currentColor" /> : <Play size={32} fill="currentColor" />}
-                  </button>
-                  
-                  {/* Voice Control within Lock In */}
-                  <div className="hover:scale-105 transition-transform">
-                    <Face3D 
-                      volume={volume} 
-                      isConnected={isConnected} 
-                      isConnecting={isConnecting} 
-                      onClick={isConnected ? stopSession : startSession} 
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-8 text-zinc-500 font-mono text-sm opacity-60">
-                  Nexus Assistant is {isConnected ? 'online and listening.' : 'offline. Tap microphone to wake.'}
-                </div>
-              </div>
-
-              {/* Right Column: Subtasks & Environment */}
-              <div className="flex flex-col gap-8 w-full border-l border-[#2A2B30] pl-0 lg:pl-12">
-                
-                {/* Stats */}
-                <div>
-                   <h3 className="text-sm font-mono tracking-widest text-zinc-500 mb-4 flex items-center gap-2">
-                     <Timer size={14} /> POMODOROS
-                   </h3>
-                   <div className="flex gap-2">
-                     {Array.from({ length: 4 }).map((_, i) => (
-                       <div key={i} className={`w-3 h-3 rounded-full ${i < (currentFocusedTask.completedPomodoros || 0) ? 'bg-[#F27D26]' : 'bg-[#2A2B30]'}`} />
-                     ))}
-                   </div>
-                </div>
-
-                {/* Subtasks */}
-                {currentFocusedTask.subtasks && currentFocusedTask.subtasks.length > 0 && (
-                  <div>
-                    <h3 className="text-sm font-mono tracking-widest text-zinc-500 mb-4 flex items-center gap-2">
-                      <ListTodo size={14} /> SUBTASKS
-                    </h3>
-                    <div className="flex flex-col gap-3">
-                      {currentFocusedTask.subtasks.map(st => (
-                        <div 
-                          key={st.id} 
-                          className="flex items-start gap-3 cursor-pointer group"
-                          onClick={() => toggleSubtask(currentFocusedTask.id, st.id)}
-                        >
-                          <div className={`mt-0.5 transition-colors ${st.completed ? 'text-[#00FF00]' : 'text-zinc-600 group-hover:text-zinc-400'}`}>
-                            {st.completed ? <CheckCircle2 size={18} /> : <Circle size={18} />}
-                          </div>
-                          <span className={`text-sm md:text-base transition-all ${st.completed ? 'opacity-40 line-through' : 'opacity-90'}`}>
-                            {st.title}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {/* Active Recall Overlay */}
+      {/* Active Recall Overlay */}
       <AnimatePresence>
         {activeQuestion && (
           <motion.div 
@@ -800,38 +763,6 @@ export default function Dashboard() {
                    </button>
                    <span className="text-[10px] font-mono text-purple-900">NEXUS_RECALL_V1</span>
                 </div>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Control Bar (Center) */}
-                <div>
-                   <h3 className="text-sm font-mono tracking-widest text-zinc-500 mb-4 flex items-center gap-2">
-                     <Volume2 size={14} /> AMBIENT NOISE
-                   </h3>
-                   <div className="flex flex-col gap-2">
-                     {[
-                       { id: 'rain', icon: CloudRain, label: 'Heavy Rain' },
-                       { id: 'coffee', icon: Coffee, label: 'Coffee Shop' },
-                       { id: 'waves', icon: Waves, label: 'Ocean Waves' }
-                     ].map(noise => (
-                       <button
-                         key={noise.id}
-                         onClick={() => setActiveNoise(activeNoise === noise.id ? null : noise.id)}
-                         className={`flex items-center gap-3 p-3 rounded-lg border transition-all ${activeNoise === noise.id ? 'border-[#F27D26] bg-[#F27D26]/10 text-[#F27D26]' : 'border-[#2A2B30] hover:border-[#4A4B50] text-zinc-400'}`}
-                       >
-                         <noise.icon size={18} />
-                         <span className="text-sm font-medium">{noise.label}</span>
-                         {activeNoise === noise.id && (
-                           <div className="ml-auto w-1.5 h-1.5 rounded-full bg-[#F27D26] shadow-[0_0_8px_#F27D26] animate-pulse" />
-                         )}
-                       </button>
-                     ))}
-                   </div>
-                </div>
-
               </div>
             </motion.div>
           </motion.div>

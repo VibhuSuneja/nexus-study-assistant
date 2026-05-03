@@ -8,10 +8,11 @@ interface FaceProps {
   volume: number;
   isConnected: boolean;
   isConnecting: boolean;
+  isGhostMode?: boolean;
 }
 
-function AvatarFace({ volume, isConnected, isConnecting }: FaceProps) {
-  const texture = useTexture('/avatar.png');
+function AvatarFace({ volume, isConnected, isConnecting, isGhostMode }: FaceProps) {
+  const texture = useTexture('/avatar.jpg');
   const groupRef = useRef<THREE.Group>(null);
   const upperFaceRef = useRef<THREE.Mesh>(null);
   const lowerJawRef = useRef<THREE.Mesh>(null);
@@ -71,7 +72,7 @@ function AvatarFace({ volume, isConnected, isConnecting }: FaceProps) {
       <mesh position={[0, 0, -0.05]}>
         <circleGeometry args={[2.1, 64]} />
         <meshBasicMaterial 
-          color={isConnected ? "#00FFDD" : isConnecting ? "#F27D26" : "#ffffff"} 
+          color={isGhostMode ? "#8B5CF6" : isConnected ? "#00FFDD" : isConnecting ? "#F27D26" : "#ffffff"} 
           transparent 
           opacity={0.15}
         />
@@ -80,11 +81,12 @@ function AvatarFace({ volume, isConnected, isConnecting }: FaceProps) {
   );
 }
 
-export default function Face3D({ volume, isConnected, isConnecting, onClick }: FaceProps & { onClick: () => void }) {
+export default function Face3D({ volume, isConnected, isConnecting, isGhostMode, onClick }: FaceProps & { onClick: () => void }) {
   return (
     <div className="w-full aspect-square cursor-pointer relative group" onClick={onClick}>
       {/* Background Ambient Glow */}
       <div className={`absolute inset-0 rounded-full blur-[100px] transition-all duration-1000 ${
+        isGhostMode && isConnected ? 'bg-[#8B5CF6]/20 opacity-100 scale-125' :
         isConnected ? 'bg-[#00FFDD]/15 opacity-100 scale-125' : 
         isConnecting ? 'bg-[#F27D26]/15 opacity-100 scale-110' : 
         'bg-white/5 opacity-20 scale-100'
@@ -95,7 +97,7 @@ export default function Face3D({ volume, isConnected, isConnecting, onClick }: F
         <ambientLight intensity={1} />
         
         <React.Suspense fallback={null}>
-          <AvatarFace volume={volume} isConnected={isConnected} isConnecting={isConnecting} />
+          <AvatarFace volume={volume} isConnected={isConnected} isConnecting={isConnecting} isGhostMode={isGhostMode} />
         </React.Suspense>
         
         <Environment preset="city" />
@@ -112,7 +114,7 @@ export default function Face3D({ volume, isConnected, isConnecting, onClick }: F
             className="absolute inset-0 flex items-center justify-center"
           >
              <div className="bg-black/60 backdrop-blur-xl border border-white/10 px-6 py-2.5 rounded-full text-[10px] font-mono tracking-[0.3em] text-white uppercase shadow-2xl opacity-0 group-hover:opacity-100 transition-all duration-300">
-               Initiate_Nexus
+               {isGhostMode ? "Initiate_Ghost" : "Initiate_Nexus"}
              </div>
           </motion.div>
         )}
@@ -122,8 +124,10 @@ export default function Face3D({ volume, isConnected, isConnecting, onClick }: F
       <div className="absolute top-0 right-0 p-4 flex flex-col items-end gap-1">
         {isConnected && (
           <div className="flex items-center gap-2">
-            <span className="text-[8px] font-mono text-[#00FFDD] uppercase tracking-widest">Live_Pulse</span>
-            <div className="w-1.5 h-1.5 rounded-full bg-[#00FFDD] animate-ping" />
+            <span className={`text-[8px] font-mono uppercase tracking-widest ${isGhostMode ? 'text-[#8B5CF6]' : 'text-[#00FFDD]'}`}>
+              {isGhostMode ? 'GHOST_STUDENT' : 'Live_Pulse'}
+            </span>
+            <div className={`w-1.5 h-1.5 rounded-full animate-ping ${isGhostMode ? 'bg-[#8B5CF6]' : 'bg-[#00FFDD]'}`} />
           </div>
         )}
         {isConnecting && (

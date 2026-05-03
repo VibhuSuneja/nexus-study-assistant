@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { db, auth } from '../lib/firebase';
 import { collection, query, onSnapshot, addDoc, updateDoc, doc, deleteDoc, orderBy } from 'firebase/firestore';
 import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
@@ -46,7 +46,7 @@ export function useTasks() {
     return unsubscribe;
   }, [user]);
 
-  const addTask = async (args: { title: string, course: string, estimatedMinutes: number }) => {
+  const addTask = useCallback(async (args: { title: string, course: string, estimatedMinutes: number }) => {
     if (!user) return { error: "Not authenticated" };
     try {
       await addDoc(collection(db, `users/${user.uid}/tasks`), {
@@ -60,23 +60,30 @@ export function useTasks() {
     } catch (e) {
       return { error: e };
     }
-  };
+  }, [user]);
 
-  const updateTask = async (taskId: string, updates: Partial<Task>) => {
+  const updateTask = useCallback(async (taskId: string, updates: Partial<Task>) => {
     if (!user) return;
     const taskRef = doc(db, `users/${user.uid}/tasks`, taskId);
     await updateDoc(taskRef, updates);
-  };
+  }, [user]);
 
-  const setFocusMode = (args: { taskId: string, durationMinutes: number }) => {
+  const setFocusMode = useCallback((args: { taskId: string, durationMinutes: number }) => {
     setFocusTask(args.taskId);
     setFocusDuration(args.durationMinutes);
     return { success: true, message: `Focus mode set for task ${args.taskId}` };
-  };
+  }, [setFocusTask, setFocusDuration]);
 
-  const syncWithMCP = (args: { appName: string }) => {
+  const syncWithMCP = useCallback((args: { appName: string }) => {
     return { success: true, message: `Successfully synced data from ${args.appName} via MCP protocol.` };
-  };
+  }, []);
+
+  const toolHandlers = useMemo(() => ({
+    getTasks: () => tasks,
+    addTask,
+    setFocusMode,
+    syncWithMCP
+  }), [tasks, addTask, setFocusMode, syncWithMCP]);
 
   return {
     tasks,
@@ -86,12 +93,8 @@ export function useTasks() {
     focusDuration,
     setFocusDuration,
     updateTask,
-    toolHandlers: {
-      getTasks: () => tasks,
-      addTask,
-      setFocusMode,
-      syncWithMCP
-    }
+    toolHandlers
   };
 }
+
 

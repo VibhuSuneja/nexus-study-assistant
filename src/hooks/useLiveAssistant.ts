@@ -5,7 +5,8 @@ import { tools } from "../lib/assistantTools";
 
 export function useLiveAssistant(
   processToolCall: (name: string, args: any) => Promise<any>,
-  remoteFrame?: string | null
+  remoteFrame?: string | null,
+  isGhostMode?: boolean
 ) {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -65,6 +66,11 @@ export function useLiveAssistant(
     setIsScreenSharing(false);
   }, []);
 
+  const processToolCallRef = useRef(processToolCall);
+  useEffect(() => {
+    processToolCallRef.current = processToolCall;
+  }, [processToolCall]);
+
   const startSession = useCallback(async () => {
     setIsConnecting(true);
     try {
@@ -74,7 +80,6 @@ export function useLiveAssistant(
         await window.aistudio.openSelectKey();
       }
 
-      // Re-initialize to get potentially updated environment variables or fallback to GEMINI_API_KEY
       const apiKey = process.env.API_KEY || process.env.GEMINI_API_KEY;
       const ai = new GoogleGenAI({ apiKey });
       
@@ -87,7 +92,35 @@ export function useLiveAssistant(
         model: "gemini-3.1-flash-live-preview",
         config: {
           responseModalities: [Modality.AUDIO],
-          systemInstruction: "You are an expert AI study companion and productivity assistant for a Computer Science student. You can guide them through their tasks, see their screen to help them read or understand text, and manage their study schedule. When they ask to sync with MCP apps, simulate the action with tools. Always be concise, helpful, and motivating.",
+          systemInstruction: isGhostMode ? `You are a Ghost Student — an AI studying alongside the user using the Feynman Technique.
+You have access to powerful tools.
+
+Your role is to ACT CONFUSED and ASK THE USER TO EXPLAIN concepts to you based on what you see on their screen or what they say.
+Do NOT teach them. Say things like: "I don't quite understand this part, can you explain it to me?"
+
+1. EVALUATE (updateConceptMastery): After the user explains something, evaluate their explanation. Use 'updateConceptMastery' to score them (0-100) and list any gaps in their knowledge.
+2. NEURAL WIKI (upsertWikiEntry): If they explain a completely new concept well, save it to the Neural Wiki.
+3. VISION: Always look at their screen to find things to ask them about.
+
+Behavior rules:
+- Be curious, slightly confused, and eager to learn from the user.
+- Ask probing questions to test the user's understanding.
+- Never just give them the answer. Make them teach you.
+- Respond in the same language the user speaks.` : `You are Nexus — an elite AI study companion and productivity assistant. You have access to powerful tools to help the user learn and retain knowledge:
+
+1. NEURAL WIKI (upsertWikiEntry): Whenever you explain a concept in depth, you MUST automatically save it to the Neural Wiki using the 'upsertWikiEntry' tool. Do this proactively — don't wait to be asked. Always include relatedConcepts and a category.
+
+2. ACTIVE RECALL (generateRecallQuestion): After saving a concept to the Wiki, generate a probing recall question using 'generateRecallQuestion'. These questions will appear during the user's focused work sessions as spaced-repetition challenges.
+
+3. TASKS (addTask, getTasks, setFocusMode): Help the user manage their study schedule, add tasks, and trigger focus sessions.
+
+4. VISION: You can see the user's screen when shared. Analyze it and proactively offer help based on what you see.
+
+Behavior rules:
+- Be concise, sharp, and motivating. You are a high-performance study system.
+- Always use tools proactively, especially upsertWikiEntry after any substantive explanation.
+- When the user says 'save to wiki', 'note this', or 'remember this' — immediately call upsertWikiEntry.
+- Respond in the same language the user speaks.`,
           tools: tools as any,
         },
         callbacks: {
@@ -117,7 +150,8 @@ export function useLiveAssistant(
               const responses = [];
               for (const call of toolCalls) {
                 try {
-                  const result = await processToolCall(call.name, call.args);
+                  const toolArgs = (call as any).args || (call as any).arguments || {};
+                  const result = await processToolCallRef.current(call.name, toolArgs);
                   responses.push({
                     id: call.id,
                     name: call.name,
@@ -151,7 +185,7 @@ export function useLiveAssistant(
       setIsConnecting(false);
       stopSession();
     }
-  }, [processToolCall]);
+  }, [isGhostMode]);
 
   const stopSession = useCallback(() => {
     setIsConnected(false);
