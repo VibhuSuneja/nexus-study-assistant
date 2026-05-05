@@ -6,12 +6,13 @@
 export class AudioStreamer {
   private audioCtx: AudioContext | null = null;
   private mediaStream: MediaStream | null = null;
-  private processor: ScriptProcessorNode | null = null;
+  private workletNode: AudioWorkletNode | null = null;
   public analyser: AnalyserNode | null = null;
   private outputAudioCtx: AudioContext | null = null;
   private nextStartTime: number = 0;
   private activeSources: AudioBufferSourceNode[] = [];
   private inputAnalyser: AnalyserNode | null = null;
+  private workletBlobUrl: string | null = null;
 
   public getVolume(): number {
     const outputLevel = this._getAnalyserLevel(this.analyser);
@@ -30,16 +31,47 @@ export class AudioStreamer {
     return sum / dataArray.length;
   }
 
-  async startInput(onData: (base64: string) => void) {
-    if (!this.audioCtx) {
-      this.audioCtx = new AudioContext({ sampleRate: 16000 });
-    }
-    
+  private async getWorkletUrl() {
+    if (this.workletBlobUrl) return this.workletBlobUrl;
+    const code = `
+      class AudioProcessor extends AudioWorkletProcessor {
+        process(inputs, outputs, parameters) {
+          const input = inputs[0];
+          if (input && input.length > 0) {
+            const channelData = input[0];
+            this.port.postMessage(channelData);
+          }
+          return true;
+        }
+      }
+      registerProcessor('audio-processor', AudioProcessor);
+    `;
+    this.workletBlobUrl = `data:application/javascript;base64,${btoa(code)}`;
+    return this.workletBlobUrl;
+  }
+
+  async initInput() {
+    if (this.audioCtx && this.audioCtx.state !== 'closed') return;
+    this.audioCtx = new AudioContext({ sampleRate: 16000 });
+    const url = await this.getWorkletUrl();
+    await this.audioCtx.audioWorklet.addModule(url);
     if (this.audioCtx.state === 'suspended') {
       await this.audioCtx.resume();
     }
+  }
 
+  async startInput(onData: (base64: string) => void) {
     try {
+      if (!this.audioCtx || this.audioCtx.state === 'closed') {
+        await this.initInput();
+      }
+      
+      let ctx = this.audioCtx!;
+      
+      if (ctx.state === 'suspended') {
+        await ctx.resume().catch(console.warn);
+      }
+
       this.mediaStream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
           echoCancellation: true,
@@ -48,17 +80,37 @@ export class AudioStreamer {
         }
       });
       
-      const source = this.audioCtx.createMediaStreamSource(this.mediaStream);
+      // Safety check if cleaned up during async call
+      if (!this.audioCtx || this.audioCtx.state === 'closed') {
+        this.mediaStream.getTracks().forEach(t => t.stop());
+        return;
+      }
 
-      this.inputAnalyser = this.audioCtx.createAnalyser();
+      if (ctx.state === 'suspended') {
+        await ctx.resume().catch(console.warn);
+      }
+
+      const source = ctx.createMediaStreamSource(this.mediaStream);
+
+      this.inputAnalyser = ctx.createAnalyser();
       this.inputAnalyser.fftSize = 256;
       source.connect(this.inputAnalyser);
 
-      // Create a ScriptProcessorNode to handle raw PCM data
-      this.processor = this.audioCtx.createScriptProcessor(4096, 1, 1);
+      try {
+        this.workletNode = new AudioWorkletNode(ctx, 'audio-processor');
+      } catch (e) {
+        console.warn("AudioWorkletNode creation failed, recreating AudioContext.", e);
+        this.audioCtx = new AudioContext({ sampleRate: 16000 });
+        ctx = this.audioCtx;
+        const url = await this.getWorkletUrl();
+        await ctx.audioWorklet.addModule(url);
+        this.workletNode = new AudioWorkletNode(ctx, 'audio-processor');
+        source.disconnect();
+        source.connect(this.inputAnalyser);
+      }
 
-      this.processor.onaudioprocess = (e) => {
-        const channelData = e.inputBuffer.getChannelData(0);
+      this.workletNode.port.onmessage = (e) => {
+        const channelData = e.data as Float32Array;
         const pcm16 = new Int16Array(channelData.length);
         for (let i = 0; i < channelData.length; i++) {
           const s = Math.max(-1, Math.min(1, channelData[i]));
@@ -72,34 +124,40 @@ export class AudioStreamer {
         onData(btoa(binaryString));
       };
 
-      source.connect(this.processor);
-      this.processor.connect(this.audioCtx.destination);
+      source.connect(this.workletNode);
+      this.workletNode.connect(ctx.destination);
     } catch (e) {
       console.error("Error starting audio input:", e);
       throw e;
     }
   }
 
-  initOutput() {
-    if (this.outputAudioCtx) return;
+  async initOutput() {
+    if (this.outputAudioCtx && this.outputAudioCtx.state !== 'closed') return;
     this.outputAudioCtx = new AudioContext({ sampleRate: 24000 });
     this.analyser = this.outputAudioCtx.createAnalyser();
     this.analyser.fftSize = 256;
     this.analyser.connect(this.outputAudioCtx.destination);
     this.nextStartTime = this.outputAudioCtx.currentTime;
+    if (this.outputAudioCtx.state === 'suspended') {
+      await this.outputAudioCtx.resume();
+    }
   }
 
   async resumeOutput() {
     if (this.outputAudioCtx && this.outputAudioCtx.state === 'suspended') {
       await this.outputAudioCtx.resume();
     }
+    if (this.audioCtx && this.audioCtx.state === 'suspended') {
+      await this.audioCtx.resume();
+    }
   }
 
   async playOutput(base64: string) {
-    if (!this.outputAudioCtx || !this.analyser) return;
+    if (!this.outputAudioCtx || !this.analyser || this.outputAudioCtx.state === 'closed') return;
 
     if (this.outputAudioCtx.state === 'suspended') {
-      await this.outputAudioCtx.resume();
+      try { await this.outputAudioCtx.resume(); } catch (e) {}
     }
 
     try {
@@ -144,16 +202,16 @@ export class AudioStreamer {
       } catch (e) {}
     });
     this.activeSources = [];
-    if (this.outputAudioCtx) {
+    if (this.outputAudioCtx && this.outputAudioCtx.state !== 'closed') {
       this.nextStartTime = this.outputAudioCtx.currentTime;
     }
   }
 
   cleanup() {
     this.stopOutput();
-    if (this.processor) {
-      this.processor.disconnect();
-      this.processor.onaudioprocess = null;
+    if (this.workletNode) {
+      try { this.workletNode.disconnect(); } catch (e) {}
+      this.workletNode.port.onmessage = null;
     }
     if (this.mediaStream) {
       this.mediaStream.getTracks().forEach((t) => t.stop());
@@ -168,7 +226,7 @@ export class AudioStreamer {
     this.outputAudioCtx = null;
     this.analyser = null;
     this.inputAnalyser = null;
-    this.processor = null;
+    this.workletNode = null;
     this.mediaStream = null;
     this.activeSources = [];
   }

@@ -26,8 +26,11 @@ function AvatarFace({ volume, isConnected, isConnecting, isGhostMode }: FaceProp
     neutral: "#ffffff"
   };
 
+  const elapsedTimeRef = useRef(0);
+
   useFrame((state, delta) => {
-    const t = state.clock.elapsedTime;
+    elapsedTimeRef.current += delta;
+    const t = elapsedTimeRef.current;
     const isSpeaking = volume > 10;
     
     if (groupRef.current) {

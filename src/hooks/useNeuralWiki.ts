@@ -1,11 +1,20 @@
 import { useState, useEffect } from 'react';
 import { db, auth, storage, functions } from '../lib/firebase';
 import { httpsCallable } from 'firebase/functions';
-
-import { collection, query, onSnapshot, addDoc, updateDoc, doc, setDoc, orderBy, getDocs, where } from 'firebase/firestore';
-import { onAuthStateChanged, signInAnonymously } from 'firebase/auth';
+import { 
+  collection, 
+  query, 
+  onSnapshot, 
+  addDoc, 
+  updateDoc, 
+  doc, 
+  setDoc, 
+  orderBy, 
+  getDocs, 
+  where 
+} from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
 import { ref, uploadString, getDownloadURL } from 'firebase/storage';
-
 
 export interface WikiEntry {
   id: string;
@@ -16,133 +25,107 @@ export interface WikiEntry {
   lastUpdated: any;
   masteryScore: number;
   imageUrl?: string;
-  embedding?: number[]; // Represented as number array on frontend
+  embedding?: number[];
 }
-
 
 export function useNeuralWiki() {
   const [entries, setEntries] = useState<WikiEntry[]>([]);
-  const [user, setUser] = useState<any>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (u) => {
-      if (u) {
-        setUser(u);
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setUserId(user.uid);
       } else {
-        signInAnonymously(auth);
+        setUserId(null);
+        setEntries([]);
       }
     });
-    return unsubscribeAuth;
+    return () => unsub();
   }, []);
 
   useEffect(() => {
-    if (!user) return;
+    if (!userId) return;
 
-    const q = query(collection(db, `users/${user.uid}/wiki`), orderBy('lastUpdated', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const entryList: WikiEntry[] = [];
-      snapshot.forEach((doc) => {
-        entryList.push({ id: doc.id, ...doc.data() } as WikiEntry);
-      });
-      setEntries(entryList);
+    const q = query(
+      collection(db, `users/${userId}/wiki`),
+      orderBy('lastUpdated', 'desc')
+    );
+
+    const unsub = onSnapshot(q, (snapshot) => {
+      const wikiEntries = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      })) as WikiEntry[];
+      setEntries(wikiEntries);
     });
 
-    return unsubscribe;
-  }, [user]);
+    return () => unsub();
+  }, [userId]);
 
-  const upsertWikiEntry = async (args: { title: string, content: string, relatedConcepts?: string[], category?: string, frame?: string }) => {
-    if (!user) return { error: "Not authenticated" };
+  const upsertWikiEntry = async (entry: Partial<WikiEntry>, imageBlob?: string) => {
+    if (!userId) return;
     setIsSyncing(true);
     try {
-      let imageUrl = "";
-      if (args.frame) {
-        try {
-          const imageRef = ref(storage, `wiki/${user.uid}/${Date.now()}.jpg`);
-          const uploadResult = await uploadString(imageRef, args.frame, 'base64');
-          imageUrl = await getDownloadURL(uploadResult.ref);
-        } catch (imgErr) {
-          console.error("Failed to upload visual snapshot:", imgErr);
-        }
+      let imageUrl = entry.imageUrl;
+      if (imageBlob) {
+        const storageRef = ref(storage, `wiki/${userId}/${Date.now()}.jpg`);
+        await uploadString(storageRef, imageBlob, 'data_url');
+        imageUrl = await getDownloadURL(storageRef);
       }
 
-      const wikiColl = collection(db, `users/${user.uid}/wiki`);
-      const q = query(wikiColl, where("title", "==", args.title));
+      const wikiRef = collection(db, `users/${userId}/wiki`);
+      const q = query(wikiRef, where('title', '==', entry.title));
       const existing = await getDocs(q);
 
+      const entryData = {
+        title: entry.title,
+        content: entry.content,
+        relatedConcepts: entry.relatedConcepts || [],
+        category: entry.category || 'General',
+        lastUpdated: new Date(),
+        masteryScore: entry.masteryScore || 0,
+        imageUrl
+      };
+
       if (!existing.empty) {
-        const entryDoc = existing.docs[0];
-        const updates: any = {
-          content: args.content,
-          relatedConcepts: args.relatedConcepts || [],
-          category: args.category || 'General',
-          lastUpdated: new Date()
-        };
-        if (imageUrl) updates.imageUrl = imageUrl;
-        
-        await updateDoc(doc(db, `users/${user.uid}/wiki`, entryDoc.id), updates);
+        await updateDoc(doc(db, `users/${userId}/wiki`, existing.docs[0].id), entryData);
       } else {
-        const newData: any = {
-          title: args.title,
-          content: args.content,
-          relatedConcepts: args.relatedConcepts || [],
-          category: args.category || 'General',
-          masteryScore: 0,
-          lastUpdated: new Date()
-        };
-        if (imageUrl) newData.imageUrl = imageUrl;
-        
-        await addDoc(wikiColl, newData);
+        await addDoc(wikiRef, entryData);
       }
-      return { success: true };
     } catch (e) {
-      console.error("Wiki Upsert Error:", e);
-      return { error: e };
+      console.error("Error upserting wiki entry:", e);
     } finally {
       setIsSyncing(false);
     }
   };
 
-  const updateMastery = async (args: { conceptTitle: string, masteryScore: number, gaps?: string[] }) => {
-    if (!user) return { error: "Not authenticated" };
+  const updateMastery = async (conceptTitle: string, score: number) => {
+    if (!userId) return;
     try {
-      const q = query(collection(db, `users/${user.uid}/wiki`), where("title", "==", args.conceptTitle));
-      const existing = await getDocs(q);
-      
-      if (!existing.empty) {
-        const entryDoc = existing.docs[0];
-        const data = entryDoc.data();
-        await updateDoc(doc(db, `users/${user.uid}/wiki`, entryDoc.id), {
-          masteryScore: args.masteryScore,
-          content: args.gaps && args.gaps.length > 0 
-            ? `${data.content}\n\n### Identified Gaps:\n${args.gaps.map(g => `- ${g}`).join('\n')}`
-            : data.content
+      const q = query(collection(db, `users/${userId}/wiki`), where('title', '==', conceptTitle));
+      const snap = await getDocs(q);
+      if (!snap.empty) {
+        await updateDoc(doc(db, `users/${userId}/wiki`, snap.docs[0].id), {
+          masteryScore: score,
+          lastUpdated: new Date()
         });
-        return { success: true };
       }
-      return { error: "Concept not found" };
     } catch (e) {
-      console.error("Mastery Update Error:", e);
-      return { error: e };
+      console.error("Error updating mastery:", e);
     }
   };
 
-  /**
-   * Performs a semantic search across the wiki entries via Cloud Function.
-   * Prioritizes notes that link to the current context.
-   */
   const semanticSearch = async (queryText: string, nexusContext?: { course?: string, activeTask?: string }) => {
-    if (!user) return [];
-    
+    if (!userId) return [];
     try {
-      // Use the semanticWikiSearch cloud function to perform vector search on the server
       const searchFn = httpsCallable(functions, 'semanticWikiSearch');
-      const response: any = await searchFn({ queryText, limit: 10 });
+      const response = await searchFn({ queryText, limit: 10 });
       
-      let results = response.data.results as WikiEntry[];
+      let results = (response.data as any).results as WikiEntry[];
       if (!results) return [];
 
-      // Prioritize based on NexusContext
       if (nexusContext) {
         results = results.sort((a, b) => {
           const aMatch = (nexusContext.course && a.category === nexusContext.course) || 
@@ -171,4 +154,3 @@ export function useNeuralWiki() {
     semanticSearch
   };
 }
-

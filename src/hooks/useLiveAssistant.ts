@@ -12,17 +12,20 @@ export function useLiveAssistant(
   const [isConnecting, setIsConnecting] = useState(false);
   const audioStreamer = useRef<AudioStreamer | null>(null);
   const screenStreamer = useRef<ScreenStreamer | null>(null);
-  const sessionRef = useRef<any>(null);
+  const sessionRef = useRef<Promise<any> | null>(null);
+  const resolvedSessionRef = useRef<any>(null);
 
   const [isScreenSharing, setIsScreenSharing] = useState(false);
 
   // Auto-send remote frame to Gemini if it arrives and we are connected
   useEffect(() => {
     if (isConnected && remoteFrame && !isScreenSharing) {
-      if (sessionRef.current) {
-        sessionRef.current.then((s: any) => s.sendRealtimeInput({
-          video: { data: remoteFrame, mimeType: "image/jpeg" }
-        }));
+      if (resolvedSessionRef.current) {
+        try {
+          resolvedSessionRef.current.sendRealtimeInput({
+            video: { data: remoteFrame, mimeType: "image/jpeg" }
+          });
+        } catch (e) {}
       }
     }
   }, [isConnected, remoteFrame, isScreenSharing]);
@@ -46,10 +49,12 @@ export function useLiveAssistant(
       }
       setIsScreenSharing(true);
       await screenStreamer.current.start((base64) => {
-        if (sessionRef.current) {
-           sessionRef.current.then((s: any) => s.sendRealtimeInput({
-             video: { data: base64, mimeType: "image/jpeg" }
-           }));
+        if (resolvedSessionRef.current) {
+           try {
+             resolvedSessionRef.current.sendRealtimeInput({
+               video: { data: base64, mimeType: "image/jpeg" }
+             });
+           } catch (e) {}
         }
       });
     } catch (e) {
@@ -86,8 +91,9 @@ export function useLiveAssistant(
       audioStreamer.current = new AudioStreamer();
       screenStreamer.current = new ScreenStreamer();
 
-      audioStreamer.current.initOutput();
-      await audioStreamer.current.resumeOutput();
+      // Initialize contexts in the user gesture context
+      await audioStreamer.current.initInput();
+      await audioStreamer.current.initOutput();
 
       const sessionPromise = ai.live.connect({
         model: "gemini-2.0-flash-exp",
@@ -126,14 +132,24 @@ Behavior rules:
         },
         callbacks: {
           onopen: async () => {
+            const session = await sessionPromise;
+            resolvedSessionRef.current = session;
             setIsConnected(true);
             setIsConnecting(false);
             
             // Start audio capture
             await audioStreamer.current?.startInput((base64) => {
-              sessionPromise.then((s) => s.sendRealtimeInput({
-                audio: { data: base64, mimeType: "audio/pcm;rate=16000" }
-              }));
+              if (resolvedSessionRef.current) {
+                try {
+                  resolvedSessionRef.current.sendRealtimeInput({
+                    audio: { data: base64, mimeType: "audio/pcm;rate=16000" }
+                  });
+                } catch (e: any) {
+                  if (!e?.message?.includes("CLOSING or CLOSED")) {
+                    console.warn("Failed to send audio input:", e);
+                  }
+                }
+              }
             });
           },
           onmessage: async (message) => {
@@ -166,7 +182,11 @@ Behavior rules:
                   });
                 }
               }
-              sessionPromise.then(s => s.sendToolResponse({ functionResponses: responses }));
+              sessionPromise.then(s => {
+                try {
+                  s.sendToolResponse({ functionResponses: responses });
+                } catch (e) {}
+              });
             }
           },
           onerror: (error) => {
@@ -201,9 +221,12 @@ Behavior rules:
       screenStreamer.current = null;
     }
     if (sessionRef.current) {
-      sessionRef.current.then((s: any) => s.close?.()).catch(() => {});
+      sessionRef.current.then((s: any) => {
+        try { s.close?.(); } catch (e) {}
+      }).catch(() => {});
       sessionRef.current = null;
     }
+    resolvedSessionRef.current = null;
   }, []);
 
   const [volume, setVolume] = useState(0);
